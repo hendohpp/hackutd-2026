@@ -1,0 +1,81 @@
+import { defineConfig } from 'vite';
+import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const clientDir = path.dirname( fileURLToPath( import.meta.url ) );
+const threeDir = path.join( clientDir, 'node_modules/three' );
+
+// The editor imports three.js through bare specifiers ('three', 'three/addons/...'),
+// and Vite resolves those from node_modules. A few editor features also fetch three.js
+// files by URL at runtime (not through import), relative to the editor page:
+//   ../build/three.core.js, three.module.js, three.webgpu.js  (File > Publish, Script player)
+//   ../examples/jsm/libs/draco/, ../examples/jsm/libs/basis/   (Draco / KTX2 decoders)
+// The editor page is served at '/', so those URLs become /build/... and /examples/jsm/...
+// This plugin serves them from node_modules/three, so we don't keep copies of build/ or examples/jsm.
+const RUNTIME_DIRS = [ 'build', 'examples/jsm' ];
+
+const MIME = {
+	'.js': 'text/javascript',
+	'.wasm': 'application/wasm',
+	'.json': 'application/json',
+};
+
+function serveThreeRuntimeFiles() {
+
+	return {
+		name: 'coscene:serve-three-runtime-files',
+
+		configureServer( server ) {
+
+			server.middlewares.use( ( req, res, next ) => {
+
+				const url = decodeURIComponent( req.url.split( '?' )[ 0 ] );
+				if ( ! RUNTIME_DIRS.some( ( dir ) => url.startsWith( `/${dir}/` ) ) ) return next();
+
+				const file = path.join( threeDir, url );
+				if ( ! file.startsWith( threeDir + path.sep ) ) return next();
+				if ( ! fs.existsSync( file ) || ! fs.statSync( file ).isFile() ) return next();
+
+				res.setHeader( 'Content-Type', MIME[ path.extname( file ) ] || 'application/octet-stream' );
+				fs.createReadStream( file ).pipe( res );
+
+			} );
+
+		},
+
+		// Copy the same files into dist/ for `npm run build`.
+		closeBundle() {
+
+			const outDir = path.join( clientDir, 'dist' );
+			if ( ! fs.existsSync( outDir ) ) return;
+
+			fs.cpSync( path.join( threeDir, 'build' ), path.join( outDir, 'build' ), { recursive: true } );
+			for ( const lib of [ 'draco', 'basis' ] ) {
+
+				fs.cpSync( path.join( threeDir, 'examples/jsm/libs', lib ), path.join( outDir, 'examples/jsm/libs', lib ), { recursive: true } );
+
+			}
+
+		},
+	};
+
+}
+
+export default defineConfig( {
+	// The editor's index.html lives in client/editor, so that folder is the web root (/).
+	root: path.join( clientDir, 'editor' ),
+	// Static extras the editor expects next to it (favicons, the Text menu's font).
+	publicDir: path.join( clientDir, 'public' ),
+	// Load env vars (VITE_*) from client/, not client/editor.
+	envDir: clientDir,
+	build: {
+		outDir: path.join( clientDir, 'dist' ),
+		emptyOutDir: true,
+	},
+	server: {
+		port: 5173,
+		strictPort: true,
+	},
+	plugins: [ serveThreeRuntimeFiles() ],
+} );
