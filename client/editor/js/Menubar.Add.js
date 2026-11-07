@@ -10,6 +10,11 @@ import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
 
 function MenubarAdd( editor ) {
 
+	// #SPACETIME add_object (Phase 4): only Box, Sphere, Cylinder, Plane and Point light are synced.
+	// Their onClick handlers call add_object( crypto.randomUUID(), kind, px, py, pz, color ) instead of
+	// AddObjectCommand. Don't add the mesh here: it appears when the new row arrives (applyRow).
+	// Every other option (Group, Capsule, Text, other lights, cameras, ...) gets hidden or disabled.
+
 	const strings = editor.strings;
 
 	const container = new UIPanel();
@@ -69,6 +74,8 @@ function MenubarAdd( editor ) {
 	option.setTextContent( strings.getKey( 'menubar/add/mesh/box' ) );
 	option.onClick( function () {
 
+		// #SPACETIME add_object( id, 'box', px, py, pz, color ): replaces the code below
+
 		const geometry = new THREE.BoxGeometry( 1, 1, 1, 1, 1, 1 );
 		const mesh = new THREE.Mesh( geometry, new THREE.MeshStandardMaterial() );
 		mesh.name = 'Box';
@@ -117,6 +124,8 @@ function MenubarAdd( editor ) {
 	option.setClass( 'option' );
 	option.setTextContent( strings.getKey( 'menubar/add/mesh/cylinder' ) );
 	option.onClick( function () {
+
+		// #SPACETIME add_object( id, 'cylinder', px, py, pz, color ): replaces the code below
 
 		const geometry = new THREE.CylinderGeometry( 1, 1, 1, 32, 1, false, 0, Math.PI * 2 );
 		const mesh = new THREE.Mesh( geometry, new THREE.MeshStandardMaterial() );
@@ -198,6 +207,8 @@ function MenubarAdd( editor ) {
 	option.setTextContent( strings.getKey( 'menubar/add/mesh/plane' ) );
 	option.onClick( function () {
 
+		// #SPACETIME add_object( id, 'plane', px, py, pz, color ): replaces the code below
+
 		const geometry = new THREE.PlaneGeometry( 1, 1, 1, 1 );
 		const material = new THREE.MeshStandardMaterial();
 		const mesh = new THREE.Mesh( geometry, material );
@@ -230,6 +241,8 @@ function MenubarAdd( editor ) {
 	option.setClass( 'option' );
 	option.setTextContent( strings.getKey( 'menubar/add/mesh/sphere' ) );
 	option.onClick( function () {
+
+		// #SPACETIME add_object( id, 'sphere', px, py, pz, color ): replaces the code below
 
 		const geometry = new THREE.SphereGeometry( 1, 32, 16, 0, Math.PI * 2, 0, Math.PI );
 		const mesh = new THREE.Mesh( geometry, new THREE.MeshStandardMaterial() );
@@ -455,6 +468,8 @@ function MenubarAdd( editor ) {
 	option.setClass( 'option' );
 	option.setTextContent( strings.getKey( 'menubar/add/light/point' ) );
 	option.onClick( function () {
+
+		// #SPACETIME add_object( id, 'pointlight', px, py, pz, color ): replaces the code below
 
 		const color = 0xffffff;
 		const intensity = 1;

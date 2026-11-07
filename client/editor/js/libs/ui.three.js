@@ -466,6 +466,7 @@ class UIOutliner extends UIDiv {
 
 			const editor = scope.editor;
 			editor.execute( new MoveObjectCommand( editor, object, newParent, nextObject ) );
+			// #SPACETIME (Phase 5) reparenting isn't in the schema: disable outliner drag & drop for synced objects
 
 			const changeEvent = new Event( 'change', { bubbles: true, cancelable: true } );
 			scope.dom.dispatchEvent( changeEvent );

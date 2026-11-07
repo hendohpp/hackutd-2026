@@ -25,6 +25,7 @@ function MenubarEdit( editor ) {
 	container.add( options );
 
 	// Undo
+	// #SPACETIME (Phase 5) hide Undo / Redo: local history can't undo other users' edits
 
 	const undo = new UIRow();
 	undo.setClass( 'option' );
@@ -79,6 +80,7 @@ function MenubarEdit( editor ) {
 	options.add( new UIHorizontalRule() );
 
 	// Center
+	// #SPACETIME Center moves the object: send update_transform instead (or hide)
 
 	let option = new UIRow();
 	option.setClass( 'option' );
@@ -103,6 +105,7 @@ function MenubarEdit( editor ) {
 	options.add( option );
 
 	// Clone
+	// #SPACETIME Clone adds an object: call add_object with a new uuid instead (or hide)
 
 	option = new UIRow();
 	option.setClass( 'option' );
@@ -121,6 +124,7 @@ function MenubarEdit( editor ) {
 	options.add( option );
 
 	// Delete
+	// #SPACETIME delete_object( id ): replaces RemoveObjectCommand; the mesh is removed when the row delete arrives
 
 	option = new UIRow();
 	option.setClass( 'option' );

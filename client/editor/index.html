@@ -102,6 +102,12 @@
 			const animationResizer = new AnimationResizer( editor );
 			document.body.appendChild( animationResizer.dom );
 
+			// #SPACETIME (Phase 3) connect to the database once the UI exists:
+			//   import { connectMultiplayer } from '../src/multiplayer.js';
+			//   connectMultiplayer( editor );
+			// It shows the connection badge, subscribes to scene_object + user, and routes row
+			// inserts/updates/deletes into applyRow / removeRow.
+
 			editor.signals.animationPanelChanged.add( function ( height ) {
 
 				const visible = height !== false;
@@ -128,6 +134,8 @@
 			//
 
 			editor.storage.init( function () {
+
+				// #SPACETIME (Phase 5) disable the IndexedDB restore + autosave below: the scene comes only from the database
 
 				editor.storage.get( async function ( state ) {
 
@@ -211,6 +219,8 @@
 
 			document.addEventListener( 'drop', function ( event ) {
 
+				// #SPACETIME (Phase 5) disable drag & drop file import: it adds objects without reducers
+
 				event.preventDefault();
 
 				if ( event.dataTransfer.types[ 0 ] === 'text/plain' ) return; // Outliner drop
@@ -245,6 +255,8 @@
 			const hash = window.location.hash;
 
 			if ( hash.slice( 1, 6 ) === 'file=' ) {
+
+				// #SPACETIME (Phase 5) disable #file= loading: it replaces the scene locally
 
 				const file = hash.slice( 6 );
 

@@ -184,6 +184,12 @@ class Selector {
 
 	setSelection( objects ) {
 
+		// #SPACETIME lock_object / unlock_object (Phase 4): every selection change funnels through here
+		// (viewport click, shift-click, outliner, select all, deselect).
+		// - call unlock_object( id ) for synced objects leaving the selection
+		// - call lock_object( id ) for synced objects entering it; if that fails (someone else holds
+		//   the lock), drop the object from the selection and show a toast
+
 		const editor = this.editor;
 
 		const hadGroupSelection = this.group.parent !== null;

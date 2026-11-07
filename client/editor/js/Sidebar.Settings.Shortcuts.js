@@ -108,6 +108,8 @@ function SidebarSettingsShortcuts( editor ) {
 
 			case 'delete': {
 
+				// #SPACETIME Delete / Backspace key: call delete_object( id ) for each selected synced object
+
 				const objects = editor.selector.selection;
 
 				const commands = [];
@@ -200,6 +202,8 @@ function SidebarSettingsShortcuts( editor ) {
 				break;
 
 			case config.getKey( 'settings/shortcuts/undo' ):
+
+				// #SPACETIME (Phase 5) disable the Ctrl+Z / Ctrl+Shift+Z shortcut
 
 				if ( IS_MAC ? event.metaKey : event.ctrlKey ) {
 

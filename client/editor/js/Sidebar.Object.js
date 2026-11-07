@@ -41,6 +41,8 @@ function SidebarObject( editor ) {
 	} );
 	objectActions.onChange( function ( event ) {
 
+		// #SPACETIME Reset Position / Rotation / Scale also have to go through update_transform
+
 		let object = editor.selected;
 
 		switch ( this.getValue() ) {
@@ -430,6 +432,8 @@ function SidebarObject( editor ) {
 	function update() {
 
 		const object = editor.selected;
+
+		// #SPACETIME update_transform( id, px..sz ): replaces the Set*Command calls below for synced objects
 
 		if ( object !== null ) {
 

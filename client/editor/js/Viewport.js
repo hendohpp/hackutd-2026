@@ -83,10 +83,14 @@ function Viewport( editor ) {
 	} );
 	transformControls.addEventListener( 'objectChange', function () {
 
+		// #SPACETIME update_transform( id, px, py, pz, rx, ry, rz, sx, sy, sz ) while dragging, throttled to ~66 ms
+
 		signals.objectChanged.dispatch( transformControls.object );
 
 	} );
 	transformControls.addEventListener( 'mouseDown', function () {
+
+		// #SPACETIME set userData.dragging = true on each dragged object so applyRow doesn't fight the local drag
 
 		const object = transformControls.object;
 
@@ -103,6 +107,9 @@ function Viewport( editor ) {
 
 	} );
 	transformControls.addEventListener( 'mouseUp', function () {
+
+		// #SPACETIME send one final update_transform per moved object, then set userData.dragging = false.
+		// The Set*Command calls below only feed local undo history (removed in Phase 5).
 
 		if ( transformControls.object !== undefined ) {
 

@@ -27,6 +27,8 @@ function SidebarMaterialColorProperty( editor, property, name ) {
 
 	function onChange() {
 
+		// #SPACETIME update_color( id, '#rrggbb' ): replaces SetMaterialColorCommand when property === 'color' on a synced object
+
 		if ( material[ property ].getHex() !== color.getHexValue() ) {
 
 			editor.execute( new SetMaterialColorCommand( editor, object, property, color.getHexValue(), materialSlot ) );
