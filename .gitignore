@@ -1,4 +1,4 @@
-# development environment and secrets
+# Development environment and secrets
 .env
 .env.*
 !.env.example
@@ -10,34 +10,41 @@ credentials.json
 service-account*.json
 *.tfstate*
 
-# claude
+# Claude
 .claude/settings.local.json
 CLAUDE.local.md
 
-# spacetime
+# Spacetime & Backend
 .spacetime/
 spacetimedb/target/
 spacetimedb/node_modules/
+server/target/
+server/dist/
 
-# frontend
+# Frontend & Dependencies
 node_modules/
 dist/
+client/dist/
 build/
 .next/
 .vite/
 coverage/
-*.log
 
-# rust
+# Rust
 target/
 
-# database
+# Database
 *.sqlite
 *.db
 
-# os and editor
+# Logs & Debugging
+*.log
+npm-debug.log*
+
+# OS and Editor
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/*
 !.vscode/settings.json
+!.vscode/extensions.json
