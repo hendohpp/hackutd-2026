@@ -12,19 +12,9 @@
 	<body>
 		<link rel="stylesheet" href="css/main.css">
 
-		<script type="importmap">
-			{
-				"imports": {
-					"three": "../build/three.module.js",
-					"three/webgpu": "../build/three.webgpu.js",
-					"three/addons/": "../examples/jsm/",
+		<!-- COSCENE: importmap removed. Vite resolves 'three', 'three/webgpu', 'three/addons/*',
+		     'three-gpu-pathtracer' and 'three-mesh-bvh' from node_modules (see client/package.json). -->
 
-					"three/examples/": "../examples/",
-					"three-gpu-pathtracer": "https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.23/build/index.module.js",
-					"three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.4/build/index.module.js"
-				}
-			}
-		</script>
 
 		<script src="https://cdn.jsdelivr.net/gh/google/draco@1.5.7/javascript/draco_encoder.js"></script>
 
@@ -275,17 +265,16 @@
 
 			}
 
-			// @deprecated, r183
+			// COSCENE: service worker registration disabled. It caches aggressively and hides our changes.
+			// Unregister any worker left over from an earlier visit to this origin.
 
 			if ( 'serviceWorker' in navigator ) {
 
-				try {
+				navigator.serviceWorker.getRegistrations().then( ( registrations ) => {
 
-					navigator.serviceWorker.register( 'sw.js' );
+					for ( const registration of registrations ) registration.unregister();
 
-				} catch ( error ) {
-
-				}
+				} );
 
 			}
 
