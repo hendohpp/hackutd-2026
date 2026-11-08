@@ -25,6 +25,15 @@ export const LockExpiry = __t.object("LockExpiry", {
 });
 export type LockExpiry = __Infer<typeof LockExpiry>;
 
+export const MyServer = __t.object("MyServer", {
+  sceneId: __t.u64(),
+  name: __t.string(),
+  owner: __t.identity(),
+  inviteCode: __t.string(),
+  members: __t.u32(),
+});
+export type MyServer = __Infer<typeof MyServer>;
+
 export const Object = __t.object("Object", {
   id: __t.u64(),
   sceneId: __t.u64(),
@@ -61,6 +70,12 @@ export const Scene = __t.object("Scene", {
   owner: __t.identity(),
 });
 export type Scene = __Infer<typeof Scene>;
+
+export const SceneInvite = __t.object("SceneInvite", {
+  sceneId: __t.u64(),
+  code: __t.string(),
+});
+export type SceneInvite = __Infer<typeof SceneInvite>;
 
 export const SceneMember = __t.object("SceneMember", {
   id: __t.u64(),

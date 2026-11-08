@@ -1,206 +1,91 @@
 <!DOCTYPE html>
 <html lang="en">
 	<head>
-		<title>three.js editor</title>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-		<link rel="apple-touch-icon" href="images/icon.png">
-		<link rel="manifest" href="manifest.json">
-		<link rel="shortcut icon" href="../files/favicon_white.ico" media="(prefers-color-scheme: dark)"/>
-		<link rel="shortcut icon" href="../files/favicon.ico" media="(prefers-color-scheme: light)" />
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>CoScene: build 3D scenes together, live</title>
+		<meta name="description" content="CoScene is a real-time multiplayer 3D editor. Edit one shared scene with your team, with live sync, object locking and presence.">
+		<meta property="og:title" content="CoScene: build 3D scenes together, live">
+		<meta property="og:description" content="A real-time multiplayer 3D editor built at HackUTD 2026.">
+		<meta property="og:type" content="website">
+		<link rel="icon" href="/files/favicon_white.ico">
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+		<link rel="stylesheet" href="site/site.css">
 	</head>
 	<body>
-		<link rel="stylesheet" href="css/main.css">
 
-		<!-- COSCENE: importmap removed. Vite resolves 'three', 'three/webgpu', 'three/addons/*',
-		     'three-gpu-pathtracer' and 'three-mesh-bvh' from node_modules (see client/package.json). -->
-
-
-		<script src="https://cdn.jsdelivr.net/gh/google/draco@1.5.7/javascript/draco_encoder.js"></script>
-
-		<link rel="stylesheet" href="js/libs/codemirror/codemirror.css">
-		<link rel="stylesheet" href="js/libs/codemirror/theme/monokai.css">
-		<script src="js/libs/codemirror/codemirror.js"></script>
-		<script src="js/libs/codemirror/mode/javascript.js"></script>
-		<script src="js/libs/codemirror/mode/glsl.js"></script>
-
-		<script src="js/libs/esprima.js"></script>
-		<script src="js/libs/jsonlint.js"></script>
-
-		<link rel="stylesheet" href="js/libs/codemirror/addon/dialog.css">
-		<link rel="stylesheet" href="js/libs/codemirror/addon/show-hint.css">
-		<link rel="stylesheet" href="js/libs/codemirror/addon/tern.css">
-
-		<script src="js/libs/codemirror/addon/dialog.js"></script>
-		<script src="js/libs/codemirror/addon/show-hint.js"></script>
-		<script src="js/libs/codemirror/addon/tern.js"></script>
-		<script src="js/libs/acorn/acorn.js"></script>
-		<script src="js/libs/acorn/acorn_loose.js"></script>
-		<script src="js/libs/acorn/walk.js"></script>
-		<script src="js/libs/ternjs/polyfill.js"></script>
-		<script src="js/libs/ternjs/signal.js"></script>
-		<script src="js/libs/ternjs/tern.js"></script>
-		<script src="js/libs/ternjs/def.js"></script>
-		<script src="js/libs/ternjs/comment.js"></script>
-		<script src="js/libs/ternjs/infer.js"></script>
-		<script src="js/libs/ternjs/doc_comment.js"></script>
-		<script src="js/libs/signals.min.js"></script>
-
-		<script type="module">
-
-			import * as THREE from 'three';
-
-			import { Editor } from './js/Editor.js';
-			import { Viewport } from './js/Viewport.js';
-			import { Toolbar } from './js/Toolbar.js';
-			import { Script } from './js/Script.js';
-			import { Player } from './js/Player.js';
-			import { Sidebar } from './js/Sidebar.js';
-			import { Menubar } from './js/Menubar.js';
-			import { Resizer } from './js/Resizer.js';
-			import { AnimationResizer } from './js/AnimationResizer.js';
-			import { Animation } from './js/Animation.js';
-
-			import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
-
-			import { Multiplayer } from '../src/multiplayer.js'; // #SPACETIME
-			import '../src/ai-panel.js'; // #SPACETIME AI teammate prompt box (all AI client code is in that file)
-
-			window.URL = window.URL || window.webkitURL;
-			window.BlobBuilder = window.BlobBuilder || window.WebKitBlobBuilder || window.MozBlobBuilder;
-
-			//
-
-			const editor = new Editor();
-
-			// #SPACETIME created before the UI, so menus and the viewport can call editor.multiplayer
-			editor.multiplayer = new Multiplayer( editor );
-
-			window.editor = editor; // Expose editor to Console
-			window.THREE = THREE; // Expose THREE to APP Scripts and Console
-
-			THREE.ObjectLoader.registerGeometry( 'TextGeometry', TextGeometry );
-
-			const viewport = new Viewport( editor );
-			document.body.appendChild( viewport.dom );
-
-			const toolbar = new Toolbar( editor );
-			document.body.appendChild( toolbar.dom );
-
-			const script = new Script( editor );
-			document.body.appendChild( script.dom );
-
-			const player = new Player( editor );
-			document.body.appendChild( player.dom );
-
-			const sidebar = new Sidebar( editor );
-			document.body.appendChild( sidebar.dom );
-
-			const menubar = new Menubar( editor );
-			document.body.appendChild( menubar.dom );
-
-			const resizer = new Resizer( editor );
-			document.body.appendChild( resizer.dom );
-
-			const animation = new Animation( editor );
-			document.body.appendChild( animation.dom );
-
-			const animationResizer = new AnimationResizer( editor );
-			document.body.appendChild( animationResizer.dom );
-
-			// #SPACETIME connect once the UI exists: the scene fills in from the database subscription
-			editor.multiplayer.connect();
-
-			editor.signals.animationPanelChanged.add( function ( height ) {
-
-				const visible = height !== false;
-
-				viewport.dom.classList.toggle( 'with-animation', visible );
-				toolbar.dom.classList.toggle( 'with-animation', visible );
-
-				if ( visible ) {
-
-					viewport.dom.style.bottom = height + 'px';
-					toolbar.dom.style.bottom = ( height + 20 ) + 'px';
-
-				} else {
-
-					viewport.dom.style.bottom = '';
-					toolbar.dom.style.bottom = '';
-
-				}
-
-				editor.signals.windowResize.dispatch();
-
-			} );
-
-			//
-
-			// #SPACETIME the scene comes only from the database: the editor's IndexedDB restore and
-			// autosave (editor.storage) were removed here. Keep the default environment lighting.
-
-			editor.signals.sceneEnvironmentChanged.dispatch( 'Default' );
-
-			//
-
-			document.addEventListener( 'dragover', function ( event ) {
-
-				event.preventDefault();
-				event.dataTransfer.dropEffect = 'copy';
-
-			} );
-
-			document.addEventListener( 'drop', function ( event ) {
-
-				event.preventDefault();
-
-				if ( event.dataTransfer.types[ 0 ] === 'text/plain' ) return; // Outliner drop
-
-				// #SPACETIME dropped files would add objects the database doesn't know: import is disabled
-				if ( editor.multiplayer ) return;
-
-				if ( event.dataTransfer.items ) {
-
-					// DataTransferItemList supports folders
-
-					editor.loader.loadItemList( event.dataTransfer.items );
-
-				} else {
-
-					editor.loader.loadFiles( event.dataTransfer.files );
-
-				}
-
-			} );
-
-			function onWindowResize() {
-
-				editor.signals.windowResize.dispatch();
-
-			}
-
-			window.addEventListener( 'resize', onWindowResize );
-
-			onWindowResize();
-
-			//
-
-			// #SPACETIME the editor's "#file=<url>" loader was removed: it replaced the scene locally,
-			// bypassing the database.
-
-			// COSCENE: service worker registration disabled. It caches aggressively and hides our changes.
-			// Unregister any worker left over from an earlier visit to this origin.
-
-			if ( 'serviceWorker' in navigator ) {
-
-				navigator.serviceWorker.getRegistrations().then( ( registrations ) => {
-
-					for ( const registration of registrations ) registration.unregister();
-
-				} );
-
-			}
-
-		</script>
+		<header class="site-header">
+			<div class="container">
+				<a class="logo" href="./">
+					<svg class="logo-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+					CoScene
+				</a>
+				<a id="header-action" class="btn btn-outline btn-sm" href="login.html">Log in</a>
+			</div>
+		</header>
+
+		<main>
+			<section class="hero">
+				<div class="container">
+					<div>
+						<p class="pill">HackUTD 2026 · multiplayer three.js editor</p>
+						<h1>Build 3D scenes <em>together</em>, live.</h1>
+						<p class="hero-lead">CoScene puts your whole team inside one shared 3D world. Add, move and recolor objects, and watch everyone else do the same in real time.</p>
+						<div class="hero-actions">
+							<a class="btn btn-primary btn-lg glow" href="login.html" data-start>Start building <i data-icon="arrow-right"></i></a>
+							<a class="btn btn-ghost btn-lg" href="#how">How it works</a>
+						</div>
+					</div>
+					<div class="cube-stage" aria-hidden="true">
+						<div class="cube-wrap"><div class="cube"><span></span><span></span><span></span><span></span><span></span><span></span></div></div>
+					</div>
+				</div>
+			</section>
+
+			<section id="how" class="how">
+				<div class="container">
+					<p class="section-kicker">How it works</p>
+					<h2>One scene. Many hands.</h2>
+
+					<div class="features">
+						<div class="feature">
+							<i data-icon="box"></i>
+							<h3>Shared scene</h3>
+							<p>Everyone in a server edits the same 3D world: boxes, spheres, cylinders, planes and lights.</p>
+						</div>
+						<div class="feature">
+							<i data-icon="radio"></i>
+							<h3>Live sync</h3>
+							<p>Every move, rotate, scale and recolor shows up instantly for everyone. The database is the source of truth.</p>
+						</div>
+						<div class="feature">
+							<i data-icon="lock"></i>
+							<h3>Object locking</h3>
+							<p>Select an object and it's yours. Others see your outline and name in your color until you let go.</p>
+						</div>
+						<div class="feature">
+							<i data-icon="users"></i>
+							<h3>Presence</h3>
+							<p>A live panel shows who's in the scene, so you always know who you're building with.</p>
+						</div>
+					</div>
+
+					<div class="cta">
+						<div>
+							<h3>Ready to open a scene?</h3>
+							<p>Create a server and share its invite code with your team.</p>
+						</div>
+						<a class="btn btn-primary btn-lg" href="login.html" data-start>Get started <i data-icon="arrow-right"></i></a>
+					</div>
+				</div>
+			</section>
+		</main>
+
+		<footer class="site-footer">CoScene · built at HackUTD 2026 · powered by SpacetimeDB</footer>
+
+		<!-- An import, not <script src>: client/src is outside Vite's web root (client/editor), and imports resolve on disk. -->
+		<script type="module">import '../src/site/landing.js';</script>
 	</body>
 </html>

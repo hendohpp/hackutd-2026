@@ -15,7 +15,7 @@
 
 import * as THREE from 'three';
 import { DbConnection, tables } from './module_bindings';
-import { signInAvailable, completeSignIn, signedInToken, signIn, signOut, forgetSignIn } from './auth.js'; // (runs first: restores ?scene after a sign-in)
+import { signInAvailable, takeSignInFailed, signedInToken, renewedSignInToken, signIn, signOut, forgetSignIn } from './auth.js';
 import './multiplayer.css';
 
 // ---------------------------------------------------------------------------------------------
@@ -74,13 +74,18 @@ class Multiplayer {
 		this.nameSkipped = false; // "Not now" on the name dialog: don't ask again this visit
 		this.signedIn = false; // connected with a SpacetimeAuth sign-in (auth.js) rather than as a guest
 
-		// Floating panel (top-left of the viewport): connection badge + who's here + sign in/out.
+		// Floating panel (top-left of the viewport): back to your servers + this server's name, connection
+		// badge, a notice (e.g. not a member), who's here, sign in/out.
+		this.server = createElement( 'div', 'coscene-server', '<a href="servers.html" title="Your servers">← Servers</a><span class="name"></span>' );
+		this.serverName = this.server.querySelector( '.name' );
 		this.badge = createElement( 'div', 'coscene-badge', '<span class="dot"></span><span class="text">Connecting…</span>' );
+		this.notice = createElement( 'div', 'coscene-notice' );
+		this.notice.hidden = true;
 		this.people = createElement( 'div', 'coscene-people' );
 		this.account = createElement( 'div', 'coscene-account' );
 		this.account.hidden = true;
 		this.panel = createElement( 'div', 'coscene-panel' );
-		this.panel.append( this.badge, this.people, this.account );
+		this.panel.append( this.server, this.badge, this.notice, this.people, this.account );
 		this.toastBox = createElement( 'div', 'coscene-toasts' );
 		document.body.append( this.panel, this.toastBox );
 
@@ -95,17 +100,8 @@ class Multiplayer {
 
 		this.setStatus( 'connecting' );
 
-		// Back from SpacetimeAuth? Finish signing in first, so we connect with the new sign-in.
-		try {
-
-			await completeSignIn();
-
-		} catch ( error ) {
-
-			console.warn( '[coscene] sign-in failed:', error );
-			this.pendingNotice = 'Sign-in didn\'t complete. You\'re continuing as a guest.'; // shown once connected
-
-		}
+		// Sign-ins finish on the landing page (SpacetimeAuth's redirect URL), which notes it if one started here failed.
+		if ( takeSignInFailed() ) this.pendingNotice = 'Sign-in didn\'t complete. You\'re continuing as a guest.'; // shown once connected
 
 		let signInToken;
 
@@ -124,7 +120,7 @@ class Multiplayer {
 		const token = signInToken ?? readToken();
 		this.refreshAccount();
 
-		this.conn = DbConnection.builder()
+		const builder = DbConnection.builder()
 			.withUri( URI )
 			.withDatabaseName( DB_NAME )
 			.withToken( token )
@@ -176,8 +172,11 @@ class Multiplayer {
 
 				}
 
-			} )
-			.build();
+			} );
+
+		// Signed in: reconnects ask for a current token (sign-in tokens last 15 minutes; auth.js renews them).
+		if ( this.signedIn ) builder.withTokenProvider( renewedSignInToken );
+		this.conn = builder.build();
 
 		const db = this.conn.db;
 
@@ -190,6 +189,9 @@ class Multiplayer {
 		} );
 		db.object.onUpdate( ( _ctx, _oldRow, row ) => this.applyRow( row ) );
 		db.object.onDelete( ( _ctx, row ) => this.removeRow( row ) );
+
+		db.scene.onInsert( () => this.refreshServerName() );
+		db.scene.onUpdate( () => this.refreshServerName() );
 
 		for ( const table of [ db.user, db.presence ] ) {
 
@@ -210,6 +212,7 @@ class Multiplayer {
 			.subscribe( [
 				tables.object.where( ( r ) => r.sceneId.eq( SCENE_ID ) ),
 				tables.presence.where( ( r ) => r.sceneId.eq( SCENE_ID ) ),
+				tables.scene.where( ( r ) => r.id.eq( SCENE_ID ) ), // this server's name
 				tables.user,
 			] );
 
@@ -238,11 +241,15 @@ class Multiplayer {
 
 		try {
 
-			await this.joinScene();
+			await this.conn.reducers.joinScene( { sceneId: SCENE_ID } );
+			this.showNotice( null );
 
 		} catch ( error ) {
 
-			this.toast( `Couldn't join scene ${SCENE_ID}: ${error.message}` );
+			// Invite-only server you haven't joined, or no such scene: say so in the panel (it stays up).
+			if ( /invite-only/.test( error.message ) ) this.showNotice( 'You\'re not a member of this server. Join it with its invite code on <a href="servers.html">your servers page</a>.' );
+			else if ( /scene not found/.test( error.message ) ) this.showNotice( 'This server doesn\'t exist. Pick one on <a href="servers.html">your servers page</a>.' );
+			else this.toast( `Couldn't join scene ${SCENE_ID}: ${error.message}` );
 			return;
 
 		}
@@ -255,21 +262,21 @@ class Multiplayer {
 
 	}
 
-	async joinScene() {
+	// A message at the top of the panel (HTML, our own text only), or null to hide it.
+	showNotice( html ) {
 
-		try {
+		this.notice.hidden = html === null;
+		this.notice.innerHTML = html ?? '';
 
-			await this.conn.reducers.joinScene( { sceneId: SCENE_ID } );
+	}
 
-		} catch ( error ) {
+	// The server's name in the panel and the tab title (scene table, this scene only).
+	refreshServerName() {
 
-			if ( SCENE_ID !== 1n || ! /scene not found/.test( error.message ) ) throw error;
-
-			// Fresh database: create the shared scene. The first scene gets id 1, and its creator is a member.
-			await this.conn.reducers.createScene( { name: 'Main' } );
-			await this.conn.reducers.joinScene( { sceneId: SCENE_ID } );
-
-		}
+		const row = this.conn?.db.scene.id.find( SCENE_ID );
+		const name = row ? row.name : '';
+		this.serverName.textContent = name;
+		document.title = name ? `${name} · CoScene` : 'CoScene';
 
 	}
 
@@ -408,6 +415,7 @@ class Multiplayer {
 		}
 
 		this.refreshPeople();
+		this.refreshServerName();
 		this.ensureName(); // my user row is in the cache now
 
 	}

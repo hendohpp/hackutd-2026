@@ -38,6 +38,7 @@ import CreateObjectReducer from "./create_object_reducer";
 import CreateSceneReducer from "./create_scene_reducer";
 import DeleteObjectReducer from "./delete_object_reducer";
 import JoinSceneReducer from "./join_scene_reducer";
+import JoinWithCodeReducer from "./join_with_code_reducer";
 import LockObjectReducer from "./lock_object_reducer";
 import SetAiKeyReducer from "./set_ai_key_reducer";
 import SetNameReducer from "./set_name_reducer";
@@ -51,6 +52,7 @@ import UpdateViewerReducer from "./update_viewer_reducer";
 import * as AskAiProcedure from "./ask_ai_procedure";
 
 // Import all table schema definitions
+import MyServersRow from "./my_servers_table";
 import ObjectRow from "./object_table";
 import PresenceRow from "./presence_table";
 import SceneRow from "./scene_table";
@@ -104,6 +106,9 @@ const tablesSchema = __schema({
       { accessor: 'id', name: 'scene_member_id_idx_btree', algorithm: 'btree', columns: [
         'id',
       ] },
+      { accessor: 'identity', name: 'scene_member_identity_idx_btree', algorithm: 'btree', columns: [
+        'identity',
+      ] },
       { accessor: 'scene_id', name: 'scene_member_scene_id_idx_btree', algorithm: 'btree', columns: [
         'sceneId',
       ] },
@@ -137,6 +142,13 @@ const tablesSchema = __schema({
       { name: 'viewer_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, ViewerRow),
+  myServers: __table({
+    name: 'my_servers',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyServersRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
@@ -145,6 +157,7 @@ const reducersSchema = __reducers(
   __reducerSchema("create_scene", CreateSceneReducer),
   __reducerSchema("delete_object", DeleteObjectReducer),
   __reducerSchema("join_scene", JoinSceneReducer),
+  __reducerSchema("join_with_code", JoinWithCodeReducer),
   __reducerSchema("lock_object", LockObjectReducer),
   __reducerSchema("set_ai_key", SetAiKeyReducer),
   __reducerSchema("set_name", SetNameReducer),
@@ -164,6 +177,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
   tables: typeof tablesSchema.schemaType.tables & {
     /** @deprecated Use `sceneMember` instead. This alias will be removed in the next major version. */
     readonly "scene_member": Omit<typeof tablesSchema.schemaType.tables["sceneMember"], "accessorName"> & { readonly accessorName: "scene_member" };
+    /** @deprecated Use `myServers` instead. This alias will be removed in the next major version. */
+    readonly "my_servers": Omit<typeof tablesSchema.schemaType.tables["myServers"], "accessorName"> & { readonly accessorName: "my_servers" };
   };
 };
 
@@ -183,6 +198,7 @@ const REMOTE_MODULE = {
 
 const tableAccessorAliases = {
   "scene_member": "sceneMember",
+  "my_servers": "myServers",
 } as const;
 
 function __withTableAccessorAliases<T extends object>(target: T, freeze = false): T {
@@ -205,12 +221,16 @@ type __DbViewBase = __DbConnectionImpl<typeof REMOTE_MODULE>["db"];
 export type DbView = __DbViewBase & {
   /** @deprecated Use `sceneMember` instead. This alias will be removed in the next major version. */
   readonly "scene_member": __DbViewBase["sceneMember"];
+  /** @deprecated Use `myServers` instead. This alias will be removed in the next major version. */
+  readonly "my_servers": __DbViewBase["myServers"];
 };
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
 export type Tables = __TablesBase & {
   /** @deprecated Use `sceneMember` instead. This alias will be removed in the next major version. */
   readonly "scene_member": __TablesBase["sceneMember"];
+  /** @deprecated Use `myServers` instead. This alias will be removed in the next major version. */
+  readonly "my_servers": __TablesBase["myServers"];
 };
 
 /** The tables available in this remote SpacetimeDB module. Each table reference doubles as a query builder. */

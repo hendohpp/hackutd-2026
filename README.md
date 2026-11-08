@@ -1,6 +1,6 @@
 # Collab3D
 
-A multiplayer version of the [three.js editor](https://threejs.org/editor/): everyone who opens the same URL edits one shared 3D scene in real time. SpacetimeDB is the entire backend; three.js only draws what's in the database.
+A multiplayer version of the [three.js editor](https://threejs.org/editor/): create a server (a shared 3D scene), share its invite code, and everyone in it edits the scene together in real time. SpacetimeDB is the entire backend; three.js only draws what's in the database.
 
 **Live:** https://hackutd-2026.vercel.app/ (database `coscene-hackutd` on SpacetimeDB Maincloud)
 
@@ -10,10 +10,12 @@ A multiplayer version of the [three.js editor](https://threejs.org/editor/): eve
 - **Edits are reducer calls.** Add, move, rotate, scale, recolor and delete call reducers (`create_object`, `update_object_transform`, `update_object_color`, `delete_object`). The change shows up for everyone, including you, when the row comes back.
 - **Selecting locks.** Selecting an object calls `lock_object`. Other people see an outline and your name in your color, and the server rejects their edits until you deselect or close the tab. Locks expire after 30 s if not renewed; the client renews them while you have something selected.
 - **Who's here.** The panel at the top-left shows the connection status and who is in the scene (`presence` table).
+- **Servers and invite codes.** A server is a scene with an owner. `create_scene` (signed-in users only) makes one with a random 6-character invite code, kept in the private `scene_invite` table. `join_with_code` makes you a member (`scene_member`). Members see their servers, codes and member counts through the `my_servers` view, and only members can edit a server's scene. Scene 1 ("Main") has no code and is open to everyone.
+- **Sign-in is optional.** Guests pick a name and get their own identity in each tab; they can join servers and edit. Signing in with SpacetimeAuth keeps the same identity on every device, uses your account's name, and lets you create servers. Its ID tokens last 15 minutes, and the client renews them with a refresh token.
 
 Synced: Box, Sphere, Cylinder, Plane and Point light; position, rotation, scale and color. Editor features that would change the scene without the database (File → New/Open/Import, Undo/Redo, drag-and-drop import, re-parenting in the outliner) are hidden. Other properties (name, material settings, geometry parameters) are still local-only.
 
-Everyone on the same link shares scene 1; add `?scene=2` to the URL for a separate scene.
+**The pages:** `/` (landing) → `login.html` (sign in, or continue as a guest with a name) → `servers.html` (your servers: create one, join with a code, copy a code or an invite link like `servers.html?join=K7QM2X`) → `editor.html?scene=N` (the editor). `editor.html` without `?scene` opens scene 1.
 
 ## Run it locally
 
@@ -33,7 +35,7 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** in two windows (each tab is its own user) and edit together. `npm run dev` connects to `ws://localhost:3000`, database `coscene`; the production build (`npm run build`) connects to Maincloud. Override either with `VITE_SPACETIME_URI` / `VITE_SPACETIME_DB` (see `client/.env.example`).
+Open **http://localhost:5173** for the landing page, or go straight to the editor at **http://localhost:5173/editor.html** in two windows (each tab is its own user) and edit together. Sign-in works locally only on port 5173 (see Troubleshooting). `npm run dev` connects to `ws://localhost:3000`, database `coscene`; the production build (`npm run build`) connects to Maincloud. Override either with `VITE_SPACETIME_URI` / `VITE_SPACETIME_DB` (see `client/.env.example`).
 
 **After changing the server** (tables or reducers): republish it, then regenerate the client bindings and commit them:
 
@@ -42,12 +44,14 @@ spacetime publish coscene --module-path server --server local    # add --delete-
 cd client && npm run generate                                     # rewrites client/src/module_bindings
 ```
 
-To update the live database: `spacetime publish coscene-hackutd --module-path server --server maincloud` (needs the owner's `spacetime login`).
+To update the live database: `spacetime publish coscene-hackutd --module-path server --server maincloud` (needs the owner's `spacetime login`). Publish before merging client changes that need the new server, because Vercel deploys `main` right away.
 
 ### Troubleshooting
 
 - **Badge says Offline / Connecting forever**: is `spacetime start` running and the module published as `coscene`? Check the browser console for the error.
 - **`spacetime call` says "you do not hold an active lock"** right after `lock_object`: expected. Each CLI call is its own short connection, and disconnecting releases your locks. Test locks with two browser windows instead.
+- **Servers page says "Couldn't load your servers: no such table: `my_servers`"**: the database is running an older module. Republish the server (see above).
+- **Sign-in fails with a redirect URL error**: SpacetimeAuth only sends you back to its registered URLs, `http://localhost:5173/` and `https://hackutd-2026.vercel.app/`. Use port 5173 locally. Other ports and Vercel preview URLs work for guests only.
 - **`Port 5173 is already in use`**: another dev server is still running. Stop it and run `npm run dev` again.
 - **On WSL, the page won't load in your Windows browser**: run `npm run dev -- --host` and open the `Network:` URL it prints.
 
@@ -55,12 +59,17 @@ To update the live database: `spacetime publish coscene-hackutd --module-path se
 
 ```
 client/
-  editor/              the three.js editor (r187), lightly modified; this is the web root
+  editor/              the web root: the site pages (index.html landing, login.html, servers.html, site/site.css)
+                       and the three.js editor (r187, lightly modified) as editor.html
+  src/site/            scripts for the site pages (sign-in or guest name, server list, create/join)
   src/multiplayer.js   the SpacetimeDB client: connection, rows -> scene, edits -> reducers, locks, presence
+  src/auth.js          optional sign-in with SpacetimeAuth, shared by the site and the editor
+  src/ai-panel.js      the "Ask AI" bar (server side: server/src/ai.rs)
   src/module_bindings/ generated by `spacetime generate` (don't edit)
   public/              static files the editor expects (favicons, font)
-  vite.config.js
-server/                SpacetimeDB module (Rust): tables.rs, reducers/, lifecycle.rs
+  vite.config.js       lists every page for the build
+server/                SpacetimeDB module (Rust): tables.rs, reducers/ (scenes.rs: servers and invite codes),
+                       lifecycle.rs, auth.rs, ai.rs
 ```
 
 Every change to the editor's own files is marked with a `#SPACETIME` comment:
