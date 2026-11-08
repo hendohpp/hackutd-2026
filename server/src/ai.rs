@@ -21,6 +21,7 @@ use spacetimedb::http::{Request, Timeout};
 use spacetimedb::{Identity, ProcedureContext, ReducerContext, SpacetimeType, Table, TimeDuration, Timestamp};
 
 use crate::math::Vec3;
+use crate::animation::animation;
 use crate::tables::{object, scene_member, viewer, Object};
 
 const GEMINI_URL: &str = "https://generativelanguage.googleapis.com/v1beta/interactions";
@@ -268,6 +269,7 @@ fn undo_last(ctx: &ReducerContext, me: Identity, scene_id: u64) -> Result<AiResu
         match editable(ctx, s.id, scene_id, me, &mut r.skipped) {
             Some(obj) if state_of(&obj) == *s => {
                 ctx.db.object().id().delete(s.id);
+                crate::animation::forget(ctx, s.id);
                 r.removed += 1;
             }
             Some(_) => r.skipped += 1,
@@ -315,6 +317,7 @@ struct Look {
 struct Nearby {
     id: u64,
     shape: AiShape,
+    anim: Option<Value>, // how it moves, if it does (animation.rs)
 }
 
 /// A shape in Gemini's terms: position relative to the spot (meters), bounding-box size, degrees.
@@ -325,6 +328,7 @@ struct AiShape {
     pos: [f64; 3],
     size: [f64; 3],
     rot: [f64; 3],
+    anim: Option<crate::animation::AiAnim>, // keeps moving (see animation.rs)
 }
 
 fn look_around(ctx: &ReducerContext, sender: Identity, scene_id: u64) -> Result<Look, String> {
@@ -361,7 +365,8 @@ fn look_around(ctx: &ReducerContext, sender: Identity, scene_id: u64) -> Result<
         .filter(|o| known_kind(&o.kind))
         .map(|o| {
             let (dx, dz) = (o.position.x as f64 - center.0, o.position.z as f64 - center.1);
-            ((dx * dx + dz * dz).sqrt(), Nearby { id: o.id, shape: from_row(&o, center) })
+            let anim = ctx.db.animation().object_id().find(o.id).map(|a| crate::animation::describe(&a, o.position, center));
+            ((dx * dx + dz * dz).sqrt(), Nearby { id: o.id, shape: from_row(&o, center), anim })
         })
         .filter(|(distance, _)| *distance <= NEARBY_RADIUS)
         .collect();
@@ -392,7 +397,17 @@ fn instructions(prompt: &str, nearby: &[Nearby]) -> String {
     let nearby_text = if nearby.is_empty() {
         "none".to_string()
     } else {
-        nearby.iter().map(|n| shape_json(Some(n.id), &n.shape).to_string()).collect::<Vec<_>>().join("\n")
+        nearby
+            .iter()
+            .map(|n| {
+                let mut v = shape_json(Some(n.id), &n.shape);
+                if let Some(anim) = &n.anim {
+                    v["anim"] = anim.clone();
+                }
+                v.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     let models_text = MODELS
         .iter()
@@ -448,6 +463,16 @@ Power tools (one action becomes many objects; use them for anything repeated):
    Asking to make something that exists bigger, smaller, longer, wider, taller, extend or stretch it, move it, turn it, recolor it or remove it is an edit: update or delete that object instead of adding new pieces around it.
    Every action includes a color; when an update or delete doesn't change the color, repeat the object's current one.
    Recolor: {{"op":"update","id":7,"color":"#d62828"}}. Make taller: {{"op":"update","id":12,"color":"#8b4513","sy":1.5,"py":0.75}}. Remove: {{"op":"delete","id":9,"color":"#ffffff"}}.
+6. Animations: anything that should keep moving gets an "anim" on its create action. Everyone in the scene sees it move. Copies made by the power tools get it too, and their pivot and path move with them.
+   - "spin": turns around "axis" ("x", "y" or "z") through "pivot" ([x, y, z] like a position; default: its own center), one turn every "period" seconds; "amount": -1 turns the other way. Wheels, fans, windmill blades (each blade's pivot is the hub's center), carousels, a ferris wheel.
+   - "orbit": goes around like spin but keeps facing the same way. Planets, carousel horses, a bird circling.
+   - "bob": moves back and forth along "axis" by "amount" meters each way, once every "period" seconds. Boats, floating islands, a hovering drone.
+   - "sway": tilts back and forth by "amount" degrees around "axis" through "pivot". Trees in the wind (pivot at the base of the trunk), a pendulum, a swing.
+   - "path": travels through the points in "path" ([[x, y, z], ...] like positions, at least 2), looping, once every "period" seconds, turning to face where it's going. Put it at the first point, turned to face the first leg. Cars around a block, a train, a boat on a river.
+   Give repeated copies different "phase" values (0 to 1) so they don't move in lockstep. Keep it believable: windmill blades about one turn every 3 seconds, cars 8 to 15 m/s.
+   Windmill blade (one of four around a hub at 0, 6.5, 1.2): {{"op":"create","kind":"box","color":"#eeeeee","px":0,"py":9,"pz":1.2,"sx":0.6,"sy":5,"sz":0.1,"anim":{{"type":"spin","axis":"z","pivot":[0,6.5,1.2],"period":3}}}}
+   A car around a 40 x 40 m block: {{"op":"create","kind":"model","model":"car_sedan","color":"#cc0000","px":-20,"py":1.17,"pz":-20,"ry":90,"anim":{{"type":"path","path":[[-20,1.17,-20],[20,1.17,-20],[20,1.17,20],[-20,1.17,20]],"period":14}}}}
+   Objects that already move show their "anim" above. To animate existing objects the user points to, or change or stop how they move (faster, slower, the other way), set "edit_existing" to true and use {{"op":"animate","id":7,"color":"#ffffff","anim":{{"type":"bob","axis":"y","amount":0.5,"period":3}}}} ("anim": {{"type":"none"}} stops it).
 
 Example answer for "a small table with a lamp" (it only shows the format and how parts attach; don't copy it):
 {EXAMPLE}"##
@@ -667,6 +692,7 @@ struct Plan {
     creates: Vec<AiShape>,
     updates: Vec<(u64, Value)>,
     deletes: Vec<u64>,
+    animates: Vec<(u64, Option<crate::animation::AiAnim>)>, // start (Some) or stop (None) on existing objects
 }
 
 fn read_plan(text: &str, look: &Look) -> Result<Plan, String> {
@@ -677,6 +703,7 @@ fn read_plan(text: &str, look: &Look) -> Result<Plan, String> {
         creates: Vec::new(),
         updates: Vec::new(),
         deletes: Vec::new(),
+        animates: Vec::new(),
     };
     let Some(actions) = parsed["actions"].as_array() else {
         return Ok(plan);
@@ -693,7 +720,7 @@ fn read_plan(text: &str, look: &Look) -> Result<Plan, String> {
     for a in actions.iter().take(MAX_ACTIONS) {
         match a["op"].as_str().unwrap_or("create") {
             "create" => {
-                let shape = if a["kind"] == "model" {
+                let mut shape = if a["kind"] == "model" {
                     let Some(m) = a["model"].as_str().and_then(model_by_id) else {
                         continue;
                     };
@@ -702,9 +729,10 @@ fn read_plan(text: &str, look: &Look) -> Result<Plan, String> {
                     let Some(kind) = a["kind"].as_str().filter(|k| KINDS.contains(k)) else {
                         continue;
                     };
-                    let blank = AiShape { kind: kind.to_string(), color: DEFAULT_COLOR.to_string(), pos: [0.0; 3], size: [1.0; 3], rot: [0.0; 3] };
+                    let blank = AiShape { kind: kind.to_string(), color: DEFAULT_COLOR.to_string(), pos: [0.0; 3], size: [1.0; 3], rot: [0.0; 3], anim: None };
                     merge(blank, a)
                 };
+                shape.anim = crate::animation::parse_ai(&a["anim"]);
                 if let Some(group) = a["part_of"].as_str() {
                     groups.push((group.to_string(), shape.clone()));
                 }
@@ -729,6 +757,12 @@ fn read_plan(text: &str, look: &Look) -> Result<Plan, String> {
                         plan.updates.retain(|(id, _)| *id != n.id);
                         plan.updates.push((n.id, a.clone()));
                     }
+                }
+            }
+            "animate" if may_edit => {
+                if let Some(n) = shown(look, a) {
+                    plan.animates.retain(|(id, _)| *id != n.id);
+                    plan.animates.push((n.id, crate::animation::parse_ai(&a["anim"]))); // no (or "none") anim: stop it
                 }
             }
             "delete" if may_edit => {
@@ -772,6 +806,9 @@ fn repeat(shapes: &[AiShape], a: &Value, include_original: bool) -> Vec<AiShape>
                 for i in 0..3 {
                     c.pos[i] += step[i] * k as f64 + row[i] * r as f64;
                 }
+                if let Some(anim) = &mut c.anim {
+                    anim.shift([0, 1, 2].map(|i| step[i] * k as f64 + row[i] * r as f64));
+                }
                 if turn != 0.0 {
                     turn_around(&mut c, turn * k as f64, pivot);
                 }
@@ -790,6 +827,9 @@ fn repeat(shapes: &[AiShape], a: &Value, include_original: bool) -> Vec<AiShape>
 /// `pivot`: its position swings around, and its own rotation turns with it.
 fn turn_around(s: &mut AiShape, degrees: f64, pivot: (f64, f64)) {
     let (sin, cos) = degrees.to_radians().sin_cos();
+    if let Some(anim) = &mut s.anim {
+        anim.turn(sin, cos, pivot); // its pivot, path and axis swing around with it
+    }
     let (dx, dz) = (s.pos[0] - pivot.0, s.pos[2] - pivot.1);
     s.pos[0] = pivot.0 + cos * dx + sin * dz;
     s.pos[2] = pivot.1 - sin * dx + cos * dz;
@@ -890,6 +930,17 @@ fn apply_plan(ctx: &ReducerContext, me: Identity, scene_id: u64, prompt: &str, p
         if let Some(obj) = editable(ctx, *id, scene_id, me, &mut skipped) {
             undo.removed.push(state_of(&obj));
             ctx.db.object().id().delete(*id);
+            crate::animation::forget(ctx, *id);
+        }
+    }
+    let mut animated = 0;
+    for (id, anim) in &plan.animates {
+        if let Some(obj) = editable(ctx, *id, scene_id, me, &mut skipped) {
+            match anim.as_ref().and_then(|a| a.to_row(obj.id, scene_id, obj.position, plan.center, ctx.timestamp)) {
+                Some(row) => crate::animation::put(ctx, row),
+                None => crate::animation::forget(ctx, obj.id),
+            }
+            animated += 1;
         }
     }
     // A standalone build goes where the caller is looking if there's room, otherwise to the nearest
@@ -898,13 +949,16 @@ fn apply_plan(ctx: &ReducerContext, me: Identity, scene_id: u64, prompt: &str, p
     for shape in &plan.creates {
         let (position, rotation, scale) = to_row(shape, center);
         let row = ctx.db.object().insert(new_object(scene_id, shape.kind.clone(), shape.color.clone(), position, rotation, scale));
+        if let Some(anim) = shape.anim.as_ref().and_then(|a| a.to_row(row.id, scene_id, row.position, center, ctx.timestamp)) {
+            crate::animation::put(ctx, anim);
+        }
         undo.created.push(state_of(&row));
     }
     let moved = (center.0 - plan.center.0).hypot(center.1 - plan.center.1);
 
     let result = AiResult {
         added: undo.created.len() as u32,
-        changed: undo.changed.len() as u32,
+        changed: undo.changed.len() as u32 + animated,
         removed: undo.removed.len() as u32,
         skipped,
         note: if moved > 0.5 { format!("Placed it {moved:.0} m to the side, where there was room.") } else { String::new() },
@@ -1112,6 +1166,7 @@ fn from_row(o: &Object, center: (f64, f64)) -> AiShape {
         pos: [o.position.x as f64 - center.0, o.position.y as f64, o.position.z as f64 - center.1],
         size,
         rot,
+        anim: None,
     }
 }
 
@@ -1183,7 +1238,7 @@ fn default_size(m: &Model) -> [f64; 3] {
 /// A model Gemini placed: its listed size, scaled evenly by "sy" (or "sx" or "sz") when given.
 fn model_shape(m: &Model, a: &Value) -> AiShape {
     let size = default_size(m);
-    let blank = AiShape { kind: format!("asset:{}", m.1), color: DEFAULT_COLOR.to_string(), pos: [0.0; 3], size, rot: [0.0; 3] };
+    let blank = AiShape { kind: format!("asset:{}", m.1), color: DEFAULT_COLOR.to_string(), pos: [0.0; 3], size, rot: [0.0; 3], anim: None };
     let mut s = merge(blank, a);
     s.size = scaled_evenly(size, a);
     s

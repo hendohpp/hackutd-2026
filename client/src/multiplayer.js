@@ -74,6 +74,9 @@ class Multiplayer {
 		this.pops = new Map(); // THREE.Object3D -> { start, scale }: objects popping in (see updateMotion)
 		this.popBatch = { at: 0, count: 0 }; // objects started popping within the same moment, for the stagger
 		this.buildMarker = null; // the ring showing where the AI is building
+		this.animations = new Map(); // object id (string) -> animation row (server/src/animation.rs), played in updateMotion
+		this.pausedAnimations = new Set(); // object ids whose animation waits while I have them selected
+		this.serverClockOffset = null; // ms to add to Date.now() for the server's clock (see sampleClock)
 		this.selectedIds = new Set(); // synced objects in my selection (I hold, or am acquiring, their locks)
 		this.pendingAdds = 0;
 		this.viewers = new Map(); // identity hex -> camera marker for someone else's view
@@ -234,6 +237,23 @@ class Multiplayer {
 			.onError( ( _ctx, error ) => console.warn( '[collab3d] other people\'s cameras are unavailable:', error ) )
 			.subscribe( [ tables.viewer.where( ( r ) => r.sceneId.eq( SCENE_ID ) ) ] );
 
+		// Animations too.
+		db.animation.onInsert( ( _ctx, row ) => this.applyAnimation( row ) );
+		db.animation.onUpdate( ( _ctx, _oldRow, row ) => this.applyAnimation( row ) );
+		db.animation.onDelete( ( _ctx, row ) => this.removeAnimation( row ) );
+
+		// The server's clock, to play animations in step: changes from my own calls say when they ran there.
+		for ( const table of [ db.object, db.presence, db.viewer, db.animation ] ) {
+
+			table.onInsert( ( ctx ) => this.sampleClock( ctx ) );
+			table.onUpdate( ( ctx ) => this.sampleClock( ctx ) );
+
+		}
+
+		this.conn.subscriptionBuilder()
+			.onError( ( _ctx, error ) => console.warn( '[collab3d] animations are unavailable:', error ) )
+			.subscribe( [ tables.animation.where( ( r ) => r.sceneId.eq( SCENE_ID ) ) ] );
+
 		if ( this.renewTimer === undefined ) this.renewTimer = setInterval( () => this.renewLocks(), LOCK_RENEW_INTERVAL );
 
 	}
@@ -264,6 +284,10 @@ class Multiplayer {
 
 		this.sendPresence( true );
 		this.sendViewer( true );
+
+		// A few more calls early on give the server-clock estimate (sampleClock, for animations) good samples
+		// even if this tab just watches.
+		for ( const delay of [ 1000, 2000, 3500 ] ) setTimeout( () => this.sendPresence( true ), delay );
 
 		// After a reconnect the server has released our locks: take them again.
 		for ( const id of this.selectedIds ) this.acquire( id );
@@ -341,7 +365,17 @@ class Multiplayer {
 			const pop = this.pops.get( object );
 			if ( pop !== undefined ) object.scale.copy( pop.scale );
 
-			if ( object.userData.dragging !== true && s.transformsInFlight === 0 && s.transformTimer === null && sameTransform( object, row ) === false ) {
+			if ( this.animations.has( id ) && this.pausedAnimations.has( id ) === false ) {
+
+				// Animated: updateMotion places it every frame from this row. Only its size comes from here.
+				if ( object.scale.x !== row.scale.x || object.scale.y !== row.scale.y || object.scale.z !== row.scale.z ) {
+
+					object.scale.set( row.scale.x, row.scale.y, row.scale.z );
+					changed = true;
+
+				}
+
+			} else if ( object.userData.dragging !== true && s.transformsInFlight === 0 && s.transformTimer === null && sameTransform( object, row ) === false ) {
 
 				setTransform( object, row );
 				changed = true;
@@ -549,6 +583,38 @@ class Multiplayer {
 
 		}
 
+		if ( this.animations.size > 0 ) {
+
+			const seconds = this.serverNow() / 1000;
+
+			for ( const [ id, anim ] of this.animations ) {
+
+				const s = this.byId.get( id );
+				if ( s === undefined ) continue;
+
+				// Mine to edit right now: show where it really is (its row), so the gizmo and my edits use that.
+				if ( this.selectedIds.has( id ) || s.object.userData.dragging === true ) {
+
+					if ( this.pausedAnimations.has( id ) === false ) {
+
+						this.pausedAnimations.add( id );
+						restPose( s.object, s.row );
+						this.requestRender( s.object ); // the selection box, around where it really is
+
+					}
+
+					continue;
+
+				}
+
+				this.pausedAnimations.delete( id );
+				animatePose( s.object, s.row, anim, seconds );
+				moving = true;
+
+			}
+
+		}
+
 		const marker = this.buildMarker;
 
 		if ( marker !== null ) {
@@ -567,6 +633,50 @@ class Multiplayer {
 		}
 
 		return moving;
+
+	}
+
+	applyAnimation( row ) {
+
+		if ( row.sceneId !== SCENE_ID ) return;
+		this.animations.set( row.objectId.toString(), row );
+
+	}
+
+	removeAnimation( row ) {
+
+		const id = row.objectId.toString();
+		this.animations.delete( id );
+		this.pausedAnimations.delete( id );
+
+		// Back to where it really is.
+		const s = this.byId.get( id );
+
+		if ( s !== undefined ) {
+
+			restPose( s.object, s.row );
+			this.requestRender( s.object );
+
+		}
+
+	}
+
+	// A change from one of my own reducer calls carries the server's time when the call ran, and reaches me
+	// a little later: the smallest gap seen is the best guess of the clock difference. (Rows from a
+	// subscription snapshot, or from other people's calls, don't say when they ran.) Animations play on the
+	// server's clock, so everyone sees the same moment of the same motion.
+	sampleClock( ctx ) {
+
+		if ( ctx.event?.tag !== 'Reducer' ) return;
+
+		const sample = Number( ctx.event.value.timestamp.microsSinceUnixEpoch / 1000n ) - Date.now();
+		this.serverClockOffset = this.serverClockOffset === null ? sample : Math.max( this.serverClockOffset, sample );
+
+	}
+
+	serverNow() {
+
+		return Date.now() + ( this.serverClockOffset ?? 0 );
 
 	}
 
@@ -1888,6 +1998,107 @@ function easeOutBack( t ) {
 	const c1 = 1.70158;
 	const c3 = c1 + 1;
 	return 1 + c3 * Math.pow( t - 1, 3 ) + c1 * Math.pow( t - 1, 2 );
+
+}
+
+// Animations (server/src/animation.rs): where an object is `seconds` (server clock) into its animation,
+// worked out from its row (where it rests) every frame. Its size isn't touched (it may be popping in).
+
+const _animRest = new THREE.Vector3();
+const _animRestQuaternion = new THREE.Quaternion();
+const _animTurn = new THREE.Quaternion();
+const _animAxis = new THREE.Vector3();
+const _animPivot = new THREE.Vector3();
+const _animEuler = new THREE.Euler();
+const ANIM_UP = new THREE.Vector3( 0, 1, 0 );
+
+function restPose( object, row ) {
+
+	object.position.set( row.position.x, row.position.y, row.position.z );
+	object.rotation.set( row.rotation.x, row.rotation.y, row.rotation.z );
+
+}
+
+function animatePose( object, row, anim, seconds ) {
+
+	const started = Number( anim.startedAt.microsSinceUnixEpoch / 1000n ) / 1000;
+	const cycle = ( seconds - started ) / anim.period + anim.phase; // turns, swings or loops since it started
+	_animRest.set( row.position.x, row.position.y, row.position.z );
+	_animRestQuaternion.setFromEuler( _animEuler.set( row.rotation.x, row.rotation.y, row.rotation.z ) );
+	_animAxis.set( anim.axis.x, anim.axis.y, anim.axis.z );
+
+	switch ( anim.kind ) {
+
+		case 'spin':
+		case 'orbit':
+		case 'sway': {
+
+			const angle = anim.kind === 'sway'
+				? THREE.MathUtils.degToRad( anim.amount ) * Math.sin( cycle * Math.PI * 2 )
+				: cycle * Math.PI * 2 * ( anim.amount < 0 ? - 1 : 1 );
+			_animTurn.setFromAxisAngle( _animAxis, angle );
+			_animPivot.set( _animRest.x + anim.pivot.x, _animRest.y + anim.pivot.y, _animRest.z + anim.pivot.z );
+			object.position.copy( _animRest ).sub( _animPivot ).applyQuaternion( _animTurn ).add( _animPivot );
+			if ( anim.kind === 'orbit' ) object.quaternion.copy( _animRestQuaternion ); // keeps facing the same way
+			else object.quaternion.copy( _animTurn ).multiply( _animRestQuaternion );
+			break;
+
+		}
+
+		case 'bob':
+
+			object.position.copy( _animRest ).addScaledVector( _animAxis, anim.amount * Math.sin( cycle * Math.PI * 2 ) );
+			object.quaternion.copy( _animRestQuaternion );
+			break;
+
+		case 'path':
+
+			followPath( object, anim.path, cycle );
+			break;
+
+	}
+
+}
+
+// Along the loop through the path's points (offsets from where it rests), at constant speed, facing where
+// it's going: turned from its resting rotation by how much the current leg turns from the first one
+// (it was placed facing the first leg).
+function followPath( object, offsets, cycle ) {
+
+	const n = offsets.length;
+	const point = ( i, target ) => target.set( _animRest.x + offsets[ i % n ].x, _animRest.y + offsets[ i % n ].y, _animRest.z + offsets[ i % n ].z );
+	const a = new THREE.Vector3();
+	const b = new THREE.Vector3();
+	const legs = [];
+	let total = 0;
+
+	for ( let i = 0; i < n; i ++ ) {
+
+		const length = point( i, a ).distanceTo( point( i + 1, b ) );
+		legs.push( length );
+		total += length;
+
+	}
+
+	if ( total < 1e-6 ) return void point( 0, object.position );
+
+	let along = ( ( cycle % 1 ) + 1 ) % 1 * total;
+	let leg = 0;
+
+	while ( leg < n - 1 && along > legs[ leg ] ) {
+
+		along -= legs[ leg ];
+		leg ++;
+
+	}
+
+	point( leg, a );
+	point( leg + 1, b );
+	object.position.copy( a ).lerp( b, legs[ leg ] > 0 ? along / legs[ leg ] : 0 );
+
+	const heading = ( from, to ) => Math.atan2( to.x - from.x, to.z - from.z );
+	const turn = heading( a, b ) - heading( point( 0, new THREE.Vector3() ), point( 1, new THREE.Vector3() ) );
+	object.quaternion.setFromAxisAngle( ANIM_UP, turn ).multiply( _animRestQuaternion );
 
 }
 

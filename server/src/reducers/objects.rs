@@ -184,6 +184,7 @@ pub fn delete_object(ctx: &ReducerContext, object_id: u64) -> Result<(), String>
     }
     require_lock(ctx, &obj)?;
     ctx.db.object().id().delete(object_id);
+    crate::animation::forget(ctx, object_id);
     Ok(())
 }
 
