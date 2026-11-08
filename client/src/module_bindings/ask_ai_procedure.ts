@@ -10,8 +10,13 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+import {
+  AiResult,
+} from "./types";
+
 export const params = {
   sceneId: __t.u64(),
   prompt: __t.string(),
+  detailed: __t.bool(),
 };
-export const returnType = __t.result(__t.u32(), __t.string())
+export const returnType = __t.result(AiResult, __t.string())
