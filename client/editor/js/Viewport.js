@@ -83,14 +83,11 @@ function Viewport( editor ) {
 	} );
 	transformControls.addEventListener( 'objectChange', function () {
 
-		// #SPACETIME update_transform( id, px, py, pz, rx, ry, rz, sx, sy, sz ) while dragging, throttled to ~66 ms
-
+		// #SPACETIME editor.multiplayer listens to objectChanged and sends update_object_transform (~15/s)
 		signals.objectChanged.dispatch( transformControls.object );
 
 	} );
 	transformControls.addEventListener( 'mouseDown', function () {
-
-		// #SPACETIME set userData.dragging = true on each dragged object so applyRow doesn't fight the local drag
 
 		const object = transformControls.object;
 
@@ -103,13 +100,13 @@ function Viewport( editor ) {
 			scale: object.scale.clone()
 		} ) );
 
+		// #SPACETIME mark the objects as dragging so database echoes don't fight the local drag
+		if ( editor.multiplayer ) editor.multiplayer.dragStart( objects );
+
 		controls.enabled = false;
 
 	} );
 	transformControls.addEventListener( 'mouseUp', function () {
-
-		// #SPACETIME send one final update_transform per moved object, then set userData.dragging = false.
-		// The Set*Command calls below only feed local undo history (removed in Phase 5).
 
 		if ( transformControls.object !== undefined ) {
 
@@ -151,6 +148,9 @@ function Viewport( editor ) {
 			}
 
 		}
+
+		// #SPACETIME send the final transform of each dragged object, then stop ignoring database echoes
+		if ( editor.multiplayer ) editor.multiplayer.dragEnd( objectStatesOnDown.map( ( state ) => state.object ) );
 
 		controls.enabled = true;
 

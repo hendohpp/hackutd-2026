@@ -27,6 +27,9 @@ function MenubarStatus( editor ) {
 	} );
 	container.add( autosave );
 
+	// #SPACETIME the database stores everything; the local IndexedDB autosave is gone
+	if ( editor.multiplayer ) autosave.setDisplay( 'none' );
+
 	editor.signals.savingStarted.add( function () {
 
 		autosave.text.setTextDecoration( 'underline' );
