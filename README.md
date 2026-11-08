@@ -2,7 +2,7 @@
 
 A multiplayer version of the [three.js editor](https://threejs.org/editor/): everyone who opens the same URL edits one shared 3D scene in real time. SpacetimeDB is the entire backend; three.js only draws what's in the database.
 
-**Live:** https://hackutd-2026.vercel.app/ (database `coscene-hackutd` on SpacetimeDB Maincloud)
+**Live:** https://hackutd-2026.vercel.app/ (database `collab3d-hackutd` on SpacetimeDB Maincloud)
 
 ## How it works
 
@@ -27,26 +27,26 @@ cd hackutd-2026
 spacetime start
 
 # terminal 2: publish the module locally, then run the editor
-spacetime publish coscene --module-path server --server local
+spacetime publish collab3d --module-path server --server local
 cd client
 npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** in two windows (each tab is its own user) and edit together. `npm run dev` connects to `ws://localhost:3000`, database `coscene`; the production build (`npm run build`) connects to Maincloud. Override either with `VITE_SPACETIME_URI` / `VITE_SPACETIME_DB` (see `client/.env.example`).
+Open **http://localhost:5173** in two windows (each tab is its own user) and edit together. `npm run dev` connects to `ws://localhost:3000`, database `collab3d`; the production build (`npm run build`) connects to Maincloud. Override either with `VITE_SPACETIME_URI` / `VITE_SPACETIME_DB` (see `client/.env.example`).
 
 **After changing the server** (tables or reducers): republish it, then regenerate the client bindings and commit them:
 
 ```sh
-spacetime publish coscene --module-path server --server local    # add --delete-data if the schema change is incompatible
+spacetime publish collab3d --module-path server --server local    # add --delete-data if the schema change is incompatible
 cd client && npm run generate                                     # rewrites client/src/module_bindings
 ```
 
-To update the live database: `spacetime publish coscene-hackutd --module-path server --server maincloud` (needs the owner's `spacetime login`).
+To update the live database: `spacetime publish collab3d-hackutd --module-path server --server maincloud` (needs the owner's `spacetime login`).
 
 ### Troubleshooting
 
-- **Badge says Offline / Connecting forever**: is `spacetime start` running and the module published as `coscene`? Check the browser console for the error.
+- **Badge says Offline / Connecting forever**: is `spacetime start` running and the module published as `collab3d`? Check the browser console for the error.
 - **`spacetime call` says "you do not hold an active lock"** right after `lock_object`: expected. Each CLI call is its own short connection, and disconnecting releases your locks. Test locks with two browser windows instead.
 - **`Port 5173 is already in use`**: another dev server is still running. Stop it and run `npm run dev` again.
 - **On WSL, the page won't load in your Windows browser**: run `npm run dev -- --host` and open the `Network:` URL it prints.

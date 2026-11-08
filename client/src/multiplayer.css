@@ -1,6 +1,4 @@
-/* CoScene multiplayer UI: connection badge, who's here, toasts. Follows the editor's light/dark theme. */
-
-.coscene-panel {
+.collab3d-panel {
 	--panel-bg: rgba( 255, 255, 255, 0.92 );
 	--panel-fg: #333;
 	--panel-muted: #777;
@@ -9,8 +7,6 @@
 	position: absolute;
 	top: 46px;
 	left: 10px;
-	/* Same layer as the editor's menu dropdowns (#menubar .menu .options, z-index 1). The panel is added to the
-	   page before the menubar, so open menus draw on top of it; it still sits above the viewport. */
 	z-index: 1;
 	min-width: 150px;
 	max-width: 240px;
@@ -27,7 +23,7 @@
 
 @media ( prefers-color-scheme: dark ) {
 
-	.coscene-panel {
+	.collab3d-panel {
 		--panel-bg: rgba( 34, 34, 34, 0.92 );
 		--panel-fg: #ddd;
 		--panel-muted: #999;
@@ -36,15 +32,15 @@
 
 }
 
-.coscene-badge {
+.collab3d-badge {
 	display: flex;
 	align-items: center;
 	gap: 6px;
 	font-weight: bold;
 }
 
-.coscene-badge .dot,
-.coscene-people .dot {
+.collab3d-badge .dot,
+.collab3d-people .dot {
 	display: inline-block;
 	width: 8px;
 	height: 8px;
@@ -52,19 +48,19 @@
 	flex: none;
 }
 
-.coscene-badge .dot { background: #f5a623; }
-.coscene-badge[data-status="live"] .dot { background: #2ecc71; }
-.coscene-badge[data-status="offline"] .dot { background: #e74c3c; }
+.collab3d-badge .dot { background: #f5a623; }
+.collab3d-badge[data-status="live"] .dot { background: #2ecc71; }
+.collab3d-badge[data-status="offline"] .dot { background: #e74c3c; }
 
-.coscene-people {
+.collab3d-people {
 	margin-top: 6px;
 	padding-top: 6px;
 	border-top: 1px solid var( --panel-border );
 }
 
-.coscene-people:empty { display: none; }
+.collab3d-people:empty { display: none; }
 
-.coscene-people .person {
+.collab3d-people .person {
 	display: flex;
 	align-items: center;
 	gap: 6px;
@@ -74,14 +70,13 @@
 	text-overflow: ellipsis;
 }
 
-/* my own row: click to change your name */
-.coscene-people .person.me {
+.collab3d-people .person.me {
 	color: var( --panel-fg );
 	cursor: pointer;
 	pointer-events: auto;
 }
 
-.coscene-people .person.me .edit {
+.collab3d-people .person.me .edit {
 	margin-left: auto;
 	padding-left: 8px;
 	font-size: 11px;
@@ -89,10 +84,9 @@
 	text-decoration: underline;
 }
 
-.coscene-people .person.me:hover .edit { color: var( --panel-fg ); }
+.collab3d-people .person.me:hover .edit { color: var( --panel-fg ); }
 
-/* name dialog */
-.coscene-dialog-backdrop {
+.collab3d-dialog-backdrop {
 	position: fixed;
 	inset: 0;
 	z-index: 150;
@@ -103,7 +97,7 @@
 	background: rgba( 0, 0, 0, 0.35 );
 }
 
-.coscene-dialog {
+.collab3d-dialog {
 	--dialog-bg: #ffffff;
 	--dialog-fg: #333;
 	--dialog-muted: #666;
@@ -124,7 +118,7 @@
 
 @media ( prefers-color-scheme: dark ) {
 
-	.coscene-dialog {
+	.collab3d-dialog {
 		--dialog-bg: #222;
 		--dialog-fg: #eee;
 		--dialog-muted: #aaa;
@@ -133,10 +127,10 @@
 
 }
 
-.coscene-dialog h2 { margin: 0; font-size: 16px; }
-.coscene-dialog p { margin: 0; font-size: 13px; line-height: 1.4; color: var( --dialog-muted ); }
+.collab3d-dialog h2 { margin: 0; font-size: 16px; }
+.collab3d-dialog p { margin: 0; font-size: 13px; line-height: 1.4; color: var( --dialog-muted ); }
 
-.coscene-dialog input {
+.collab3d-dialog input {
 	font: inherit;
 	font-size: 15px;
 	padding: 8px 10px;
@@ -146,11 +140,11 @@
 	color: inherit;
 }
 
-.coscene-dialog input:focus { outline: 2px solid var( --dialog-accent ); outline-offset: 1px; }
+.collab3d-dialog input:focus { outline: 2px solid var( --dialog-accent ); outline-offset: 1px; }
 
-.coscene-dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.collab3d-dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
-.coscene-dialog button {
+.collab3d-dialog button {
 	font: inherit;
 	font-size: 13px;
 	padding: 7px 14px;
@@ -161,15 +155,15 @@
 	cursor: pointer;
 }
 
-.coscene-dialog button[type="submit"] {
+.collab3d-dialog button[type="submit"] {
 	border-color: var( --dialog-accent );
 	background: var( --dialog-accent );
 	color: #fff;
 }
 
-.coscene-dialog button:focus-visible { outline: 2px solid var( --dialog-accent ); outline-offset: 2px; }
+.collab3d-dialog button:focus-visible { outline: 2px solid var( --dialog-accent ); outline-offset: 2px; }
 
-.coscene-toasts {
+.collab3d-toasts {
 	position: fixed;
 	left: 50%;
 	bottom: 24px;
@@ -182,7 +176,7 @@
 	pointer-events: none;
 }
 
-.coscene-toast {
+.collab3d-toast {
 	max-width: min( 90vw, 420px );
 	padding: 8px 14px;
 	border-radius: 6px;
@@ -193,4 +187,4 @@
 	transition: opacity 0.4s;
 }
 
-.coscene-toast.hide { opacity: 0; }
+.collab3d-toast.hide { opacity: 0; }

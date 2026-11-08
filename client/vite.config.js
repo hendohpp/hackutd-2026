@@ -24,7 +24,7 @@ const MIME = {
 function serveThreeRuntimeFiles() {
 
 	return {
-		name: 'coscene:serve-three-runtime-files',
+		name: 'collab3d:serve-three-runtime-files',
 
 		configureServer( server ) {
 

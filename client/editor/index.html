@@ -1,20 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 	<head>
-		<title>three.js editor</title>
+		<title>Collab3D</title>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-		<link rel="apple-touch-icon" href="images/icon.png">
+		<link rel="apple-touch-icon" href="images/favicon.png">
 		<link rel="manifest" href="manifest.json">
-		<link rel="shortcut icon" href="../files/favicon_white.ico" media="(prefers-color-scheme: dark)"/>
-		<link rel="shortcut icon" href="../files/favicon.ico" media="(prefers-color-scheme: light)" />
 	</head>
 	<body>
 		<link rel="stylesheet" href="css/main.css">
-
-		<!-- COSCENE: importmap removed. Vite resolves 'three', 'three/webgpu', 'three/addons/*',
-		     'three-gpu-pathtracer' and 'three-mesh-bvh' from node_modules (see client/package.json). -->
-
 
 		<script src="https://cdn.jsdelivr.net/gh/google/draco@1.5.7/javascript/draco_encoder.js"></script>
 
@@ -182,14 +176,6 @@
 			window.addEventListener( 'resize', onWindowResize );
 
 			onWindowResize();
-
-			//
-
-			// #SPACETIME the editor's "#file=<url>" loader was removed: it replaced the scene locally,
-			// bypassing the database.
-
-			// COSCENE: service worker registration disabled. It caches aggressively and hides our changes.
-			// Unregister any worker left over from an earlier visit to this origin.
 
 			if ( 'serviceWorker' in navigator ) {
 
