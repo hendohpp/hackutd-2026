@@ -21,7 +21,6 @@ function MenubarFile( editor ) {
 	container.add( options );
 
 	// New Project
-	// #SPACETIME (Phase 5) hide File > New: clearing the scene locally bypasses reducers
 
 	const newProjectSubmenuTitle = new UIRow().setTextContent( strings.getKey( 'menubar/file/new' ) ).addClass( 'option' ).addClass( 'submenu-title' );
 	newProjectSubmenuTitle.onMouseOver( function () {
@@ -39,6 +38,7 @@ function MenubarFile( editor ) {
 
 	} );
 	options.add( newProjectSubmenuTitle );
+	if ( editor.multiplayer ) newProjectSubmenuTitle.setDisplay( 'none' ); // #SPACETIME New would clear the scene locally
 
 	const newProjectSubmenu = new UIPanel().setPosition( 'fixed' ).addClass( 'options' ).setDisplay( 'none' );
 	newProjectSubmenuTitle.add( newProjectSubmenu );
@@ -103,7 +103,6 @@ function MenubarFile( editor ) {
 	}
 
 	// Open
-	// #SPACETIME (Phase 5) hide File > Open: loading a project locally bypasses reducers
 
 	const openProjectForm = document.createElement( 'form' );
 	openProjectForm.style.display = 'none';
@@ -164,6 +163,7 @@ function MenubarFile( editor ) {
 		} );
 
 	options.add( option );
+	if ( editor.multiplayer ) option.setDisplay( 'none' ); // #SPACETIME opening a project would replace the scene locally
 
 	// Save
 
@@ -185,7 +185,6 @@ function MenubarFile( editor ) {
 	options.add( new UIHorizontalRule() );
 
 	// Import
-	// #SPACETIME (Phase 5) hide File > Import: imported objects would not be in the database
 
 	const form = document.createElement( 'form' );
 	form.style.display = 'none';
@@ -211,6 +210,7 @@ function MenubarFile( editor ) {
 
 	} );
 	options.add( option );
+	if ( editor.multiplayer ) option.setDisplay( 'none' ); // #SPACETIME imported objects wouldn't be in the database
 
 	// Export
 

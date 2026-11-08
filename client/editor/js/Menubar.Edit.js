@@ -25,7 +25,6 @@ function MenubarEdit( editor ) {
 	container.add( options );
 
 	// Undo
-	// #SPACETIME (Phase 5) hide Undo / Redo: local history can't undo other users' edits
 
 	const undo = new UIRow();
 	undo.setClass( 'option' );
@@ -77,10 +76,20 @@ function MenubarEdit( editor ) {
 
 	// ---
 
-	options.add( new UIHorizontalRule() );
+	const historyRule = new UIHorizontalRule();
+	options.add( historyRule );
+
+	// #SPACETIME hide Undo / Redo: local history can't undo through the database or undo other users' edits
+	if ( editor.multiplayer ) {
+
+		undo.setDisplay( 'none' );
+		redo.setDisplay( 'none' );
+		historyRule.setDisplay( 'none' );
+
+	}
 
 	// Center
-	// #SPACETIME Center moves the object: send update_transform instead (or hide)
+	// #SPACETIME synced: SetPositionCommand dispatches objectChanged, which editor.multiplayer sends
 
 	let option = new UIRow();
 	option.setClass( 'option' );
@@ -105,7 +114,6 @@ function MenubarEdit( editor ) {
 	options.add( option );
 
 	// Clone
-	// #SPACETIME Clone adds an object: call add_object with a new uuid instead (or hide)
 
 	option = new UIRow();
 	option.setClass( 'option' );
@@ -116,6 +124,9 @@ function MenubarEdit( editor ) {
 
 		if ( object === null || object.parent === null ) return; // avoid cloning the camera or scene
 
+		// #SPACETIME synced objects are cloned through create_object (same kind, color and transform)
+		if ( editor.multiplayer && editor.multiplayer.cloneObject( object ) ) return;
+
 		object = clone( object );
 
 		editor.execute( new AddObjectCommand( editor, object ) );
@@ -124,7 +135,6 @@ function MenubarEdit( editor ) {
 	options.add( option );
 
 	// Delete
-	// #SPACETIME delete_object( id ): replaces RemoveObjectCommand; the mesh is removed when the row delete arrives
 
 	option = new UIRow();
 	option.setClass( 'option' );
@@ -135,6 +145,9 @@ function MenubarEdit( editor ) {
 		const object = editor.selected;
 
 		if ( object === null || object.parent === null ) return;
+
+		// #SPACETIME synced objects are deleted through delete_object; the row delete removes them
+		if ( editor.multiplayer && editor.multiplayer.deleteObjects( [ object ] ).length === 0 ) return;
 
 		if ( object.isSpotLight || object.isDirectionalLight ) {
 
