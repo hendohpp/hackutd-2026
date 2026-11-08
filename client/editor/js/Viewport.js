@@ -21,6 +21,7 @@ import { MultiCmdsCommand } from './commands/MultiCmdsCommand.js';
 import { ColorEnvironment } from 'three/addons/environments/ColorEnvironment.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { ViewportPathtracer } from './Viewport.Pathtracer.js';
+import { ViewportSky } from '../../src/sky.js'; // #SPACETIME sky, ground and daylight for the default look
 
 function Viewport( editor ) {
 
@@ -43,6 +44,7 @@ function Viewport( editor ) {
 	let camera = editor.camera;
 	const scene = editor.scene;
 	const sceneHelpers = editor.sceneHelpers;
+	const viewportSky = new ViewportSky(); // #SPACETIME drawn behind the scene while its background is "Default"
 
 	// helpers
 
@@ -665,7 +667,8 @@ function Viewport( editor ) {
 
 				} else {
 
-					scene.environment = pmremGenerator.fromScene( new RoomEnvironment(), 0.04 ).texture;
+					// #SPACETIME daylight from the default sky (src/sky.js) instead of the gray room
+					scene.environment = viewportSky.environment( pmremGenerator );
 
 				}
 
@@ -982,7 +985,17 @@ function Viewport( editor ) {
 		startTime = performance.now();
 
 		renderer.setViewport( 0, 0, container.dom.offsetWidth, container.dom.offsetHeight );
+
+		// #SPACETIME the default look: sky and ground first (src/sky.js), then the scene over them
+		if ( scene.background === null ) {
+
+			viewportSky.render( renderer, editor.viewportCamera );
+			renderer.autoClear = false;
+
+		}
+
 		renderer.render( scene, editor.viewportCamera );
+		renderer.autoClear = true;
 
 		if ( camera === editor.viewportCamera ) {
 
