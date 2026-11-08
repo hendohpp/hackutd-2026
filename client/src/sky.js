@@ -20,8 +20,8 @@ const SUN = new THREE.Color( 0xfff0d8 );
 const SUN_INTENSITY = 40;
 const SUN_DIRECTION = new THREE.Vector3( 0.55, 0.62, 0.56 ).normalize(); // high in the sky, front right
 
-const GROUND_FADE_START = 60; // meters from the camera where the ground starts fading into the haze
-const GROUND_FADE_END = 900;
+const GROUND_FADE_START = 200; // meters from the camera where the ground starts fading into the haze
+const GROUND_FADE_END = 2000;
 
 const skyShader = {
 	uniforms: {

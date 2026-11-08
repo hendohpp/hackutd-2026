@@ -37,8 +37,8 @@ const POP_MAX_DELAY = 1000; // ms
 // Where ask_ai builds: the spot on the ground the camera looks at. Same math and limits as looking_at in
 // server/src/ai.rs (LOOK_DISTANCE, MAX_LOOK_DISTANCE, WORLD_LIMIT): keep them in sync.
 const AI_LOOK_DISTANCE = 8;
-const AI_MAX_LOOK_DISTANCE = 30;
-const AI_WORLD_LIMIT = 200;
+const AI_MAX_LOOK_DISTANCE = 150;
+const AI_WORLD_LIMIT = 1000;
 
 // The kinds the database knows, built exactly like the editor's Add menu builds them.
 const KINDS = {

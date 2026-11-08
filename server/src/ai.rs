@@ -33,23 +33,23 @@ const CLAUDE_MAX_TOKENS: u32 = 16000; // thinking + the JSON answer
 const CLAUDE_TIMEOUT_SECS: u64 = 120;
 const CLAUDE_KEY_ROW: u32 = 1; // ai_config row of the Claude key (row 0 is Gemini's)
 const KINDS: [&str; 8] = ["box", "sphere", "cylinder", "cone", "capsule", "torus", "icosahedron", "plane"];
-const MAX_CREATE: usize = 200; // new objects per request, after repeats are expanded
+const MAX_CREATE: usize = 500; // new objects per request, after repeats are expanded
 const MAX_ACTIONS: usize = 80; // actions in Gemini's answer (one action can repeat into many objects)
 const MAX_COPIES: i64 = 60; // "times" and "times2" limits for one repeat
 const MAX_DELETES: usize = 15; // limits the damage if Gemini misreads a request in a shared scene
-const MAX_POS: f64 = 30.0; // x and z: meters from the spot the caller is looking at
+const MAX_POS: f64 = 100.0; // x and z: meters from the spot the caller is looking at (a 200 x 200 m build)
 const MIN_Y: f64 = -1.0;
-const MAX_Y: f64 = 40.0;
+const MAX_Y: f64 = 150.0;
 const MIN_SIZE: f64 = 0.05;
-const MAX_SIZE: f64 = 60.0;
-const NEARBY_RADIUS: f64 = 16.0; // objects this close to the spot are shown to Gemini and can be edited
-const NEARBY_MAX: usize = 80;
+const MAX_SIZE: f64 = 200.0; // one ground plane can cover a whole build
+const NEARBY_RADIUS: f64 = 50.0; // objects this close to the spot are shown to the model and can be edited
+const NEARBY_MAX: usize = 150;
 const LOOK_DISTANCE: f64 = 8.0; // where to build when the camera looks at the horizon
-const MAX_LOOK_DISTANCE: f64 = 30.0;
-const WORLD_LIMIT: f64 = 200.0;
+const MAX_LOOK_DISTANCE: f64 = 150.0; // keep in sync with client/src/multiplayer.js
+const WORLD_LIMIT: f64 = 1000.0; // keep in sync with client/src/multiplayer.js
 const FREE_SPACE_GAP: f64 = 1.0; // meters kept between a standalone build and what's already there
 const FREE_SPACE_STEP: f64 = 1.0; // search rings are this far apart
-const FREE_SPACE_RADIUS: f64 = 60.0; // how far from the asked-for spot to look for room
+const FREE_SPACE_RADIUS: f64 = 60.0; // how far from the asked-for spot to look for room (more for big builds)
 const MAX_PROMPT_CHARS: usize = 300;
 const EVENTS_KEPT: usize = 20; // AI notices kept per scene
 const DEFAULT_COLOR: &str = "#888888";
@@ -961,8 +961,12 @@ fn free_spot(ctx: &ReducerContext, scene_id: u64, plan: &Plan) -> (f64, f64) {
         return plan.center;
     };
 
+    // Big builds look further for room (in bigger steps, below): far enough to clear a neighbor as big
+    // as themselves, so a second city doesn't land on the first. Small builds search as before.
+    let radius = FREE_SPACE_RADIUS + (hi[0] - lo[0]).max(hi[2] - lo[2]) * 2.5;
+
     // Everything already within reach of any spot we might try.
-    let reach = FREE_SPACE_RADIUS + FREE_SPACE_GAP;
+    let reach = radius + FREE_SPACE_GAP;
     let others: Vec<([f64; 3], [f64; 3])> = ctx
         .db
         .object()
@@ -994,7 +998,7 @@ fn free_spot(ctx: &ReducerContext, scene_id: u64, plan: &Plan) -> (f64, f64) {
     // Bigger builds search in bigger steps (fewer spots to check, and they need the room anyway).
     let step = FREE_SPACE_STEP.max((hi[0] - lo[0]).max(hi[2] - lo[2]) / 4.0);
     let mut r = step;
-    while r <= FREE_SPACE_RADIUS {
+    while r <= radius {
         let n = (std::f64::consts::TAU * r / step).ceil() as usize;
         for k in 0..n {
             let angle = std::f64::consts::TAU * k as f64 / n as f64;
