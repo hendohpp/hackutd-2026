@@ -14,6 +14,7 @@
 // The editor calls into this file through editor.multiplayer. Search the editor for "#SPACETIME".
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DbConnection, tables } from './module_bindings';
 import './multiplayer.css';
 
@@ -48,6 +49,11 @@ const KINDS = {
 	cylinder: () => mesh( 'Cylinder', new THREE.CylinderGeometry( 1, 1, 1, 32, 1, false, 0, Math.PI * 2 ) ),
 	plane: () => mesh( 'Plane', new THREE.PlaneGeometry( 1, 1, 1, 1 ) ),
 	pointlight: () => named( new THREE.PointLight( 0xffffff, 1, 0 ), 'PointLight' ),
+	// AI teammate shapes (server/src/ai.rs base_size must match these sizes)
+	cone: () => mesh( 'Cone', new THREE.ConeGeometry( 1, 1, 32 ) ),
+	capsule: () => mesh( 'Capsule', new THREE.CapsuleGeometry( 1, 1, 4, 8, 1 ) ),
+	torus: () => mesh( 'Torus', new THREE.TorusGeometry( 1, 0.4, 12, 48, Math.PI * 2 ) ),
+	icosahedron: () => mesh( 'Icosahedron', new THREE.IcosahedronGeometry( 1, 0 ) ),
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -253,7 +259,8 @@ class Multiplayer {
 
 			if ( s === undefined ) {
 
-				const make = Object.hasOwn( KINDS, row.kind ) ? KINDS[ row.kind ] : unknownKind( row.kind );
+				const make = Object.hasOwn( KINDS, row.kind ) ? KINDS[ row.kind ]
+					: ASSET_KIND.test( row.kind ) ? assetKind( row.kind, this.editor ) : unknownKind( row.kind );
 				const object = make();
 				object.userData.id = id;
 
@@ -589,12 +596,13 @@ class Multiplayer {
 
 	// AI helper (ai-panel.js): runs the server's ask_ai procedure over this tab's connection, so the
 	// call doesn't count as a separate visit (which would release my locks and presence on the way out).
-	// Resolves to the number of objects added; rejects with the server's message.
-	async askAi( prompt ) {
+	// Resolves to what the AI did ({ added, changed, removed, skipped, note }); rejects with the server's message.
+	// `detailed` asks for the slower, better model.
+	async askAi( prompt, detailed = false ) {
 
 		if ( this.connected === false ) throw new Error( 'Not connected to the database yet.' );
 
-		const result = await this.conn.procedures.askAi( { sceneId: SCENE_ID, prompt } );
+		const result = await this.conn.procedures.askAi( { sceneId: SCENE_ID, prompt, detailed } );
 		if ( 'err' in result ) throw new Error( result.err );
 		return result.ok;
 
@@ -1419,6 +1427,65 @@ function named( object, name ) {
 function unknownKind( kind ) {
 
 	return () => mesh( `Unknown (${kind})`, new THREE.BoxGeometry( 0.5, 0.5, 0.5 ) );
+
+}
+
+// AI teammate models: kind "asset:<kit>/<name>" shows client/public/assets/kenney/<kit>/<name>.glb
+// (low-poly Kenney.nl kits, CC0; server/src/ai.rs MODELS lists them with their sizes).
+// The model is centered on the object, so position and scale work like the other kinds, and each part
+// points at the object (userData.object), so clicking any part selects the whole model.
+const ASSET_KIND = /^asset:([a-z0-9-]+\/[A-Za-z0-9_-]+)$/;
+const assetModels = new Map(); // path -> Promise of the loaded, centered model (loaded once, copied per object)
+let gltfLoader = null;
+
+function assetKind( kind, editor ) {
+
+	const path = kind.match( ASSET_KIND )[ 1 ];
+	const name = path.split( '/' )[ 1 ].replace( /[-_]/g, ' ' ).replace( /^./, ( c ) => c.toUpperCase() );
+
+	return () => {
+
+		const group = named( new THREE.Group(), name );
+
+		loadAsset( path ).then( ( model ) => {
+
+			const copy = model.clone( true );
+			copy.traverse( ( child ) => {
+
+				if ( child.isMesh !== true ) return;
+				// Own copies, so removing this object (disposeObject) doesn't break other copies.
+				child.geometry = child.geometry.clone();
+				child.material = Array.isArray( child.material ) ? child.material.map( ( m ) => m.clone() ) : child.material.clone();
+				child.userData.object = group;
+
+			} );
+			group.add( copy );
+			editor.signals.sceneGraphChanged.dispatch(); // redraw, and make the new parts clickable
+
+		} ).catch( ( error ) => console.warn( `[coscene] couldn't load model ${path}:`, error ) );
+
+		return group;
+
+	};
+
+}
+
+function loadAsset( path ) {
+
+	if ( assetModels.has( path ) === false ) {
+
+		gltfLoader ??= new GLTFLoader();
+		assetModels.set( path, gltfLoader.loadAsync( `assets/kenney/${path}.glb` ).then( ( gltf ) => {
+
+			const model = gltf.scene;
+			model.position.sub( new THREE.Box3().setFromObject( model, true ).getCenter( new THREE.Vector3() ) );
+			return new THREE.Group().add( model );
+
+		} ) );
+
+	}
+
+	return assetModels.get( path );
 
 }
 

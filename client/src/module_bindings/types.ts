@@ -17,6 +17,44 @@ export const AiConfig = __t.object("AiConfig", {
 });
 export type AiConfig = __Infer<typeof AiConfig>;
 
+export const AiEvent = __t.object("AiEvent", {
+  id: __t.u64(),
+  sceneId: __t.u64(),
+  who: __t.identity(),
+  prompt: __t.string(),
+  added: __t.u32(),
+  changed: __t.u32(),
+  removed: __t.u32(),
+  undo: __t.bool(),
+  at: __t.timestamp(),
+});
+export type AiEvent = __Infer<typeof AiEvent>;
+
+export const AiResult = __t.object("AiResult", {
+  added: __t.u32(),
+  changed: __t.u32(),
+  removed: __t.u32(),
+  skipped: __t.u32(),
+  note: __t.string(),
+});
+export type AiResult = __Infer<typeof AiResult>;
+
+export const AiUndo = __t.object("AiUndo", {
+  identity: __t.identity(),
+  sceneId: __t.u64(),
+  prompt: __t.string(),
+  get created() {
+    return __t.array(ObjectState);
+  },
+  get changed() {
+    return __t.array(ObjectChange);
+  },
+  get removed() {
+    return __t.array(ObjectState);
+  },
+});
+export type AiUndo = __Infer<typeof AiUndo>;
+
 export const LockExpiry = __t.object("LockExpiry", {
   scheduledId: __t.u64(),
   scheduledAt: __t.scheduleAt(),
@@ -44,6 +82,32 @@ export const Object = __t.object("Object", {
   lockSeq: __t.u64(),
 });
 export type Object = __Infer<typeof Object>;
+
+export const ObjectChange = __t.object("ObjectChange", {
+  get before() {
+    return ObjectState;
+  },
+  get after() {
+    return ObjectState;
+  },
+});
+export type ObjectChange = __Infer<typeof ObjectChange>;
+
+export const ObjectState = __t.object("ObjectState", {
+  id: __t.u64(),
+  kind: __t.string(),
+  color: __t.string(),
+  get position() {
+    return Vec3;
+  },
+  get rotation() {
+    return Vec3;
+  },
+  get scale() {
+    return Vec3;
+  },
+});
+export type ObjectState = __Infer<typeof ObjectState>;
 
 export const Presence = __t.object("Presence", {
   identity: __t.identity(),

@@ -49,8 +49,10 @@ import UpdateViewerReducer from "./update_viewer_reducer";
 
 // Import all procedure arg schemas
 import * as AskAiProcedure from "./ask_ai_procedure";
+import * as UndoAiProcedure from "./undo_ai_procedure";
 
 // Import all table schema definitions
+import AiEventRow from "./ai_event_table";
 import ObjectRow from "./object_table";
 import PresenceRow from "./presence_table";
 import SceneRow from "./scene_table";
@@ -62,6 +64,20 @@ import ViewerRow from "./viewer_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  aiEvent: __table({
+    name: 'ai_event',
+    indexes: [
+      { accessor: 'id', name: 'ai_event_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'scene_id', name: 'ai_event_scene_id_idx_btree', algorithm: 'btree', columns: [
+        'sceneId',
+      ] },
+    ],
+    constraints: [
+      { name: 'ai_event_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AiEventRow),
   object: __table({
     name: 'object',
     indexes: [
@@ -158,10 +174,13 @@ const reducersSchema = __reducers(
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
 const proceduresSchema = __procedures(
   __procedureSchema("ask_ai", AskAiProcedure.params, AskAiProcedure.returnType),
+  __procedureSchema("undo_ai", UndoAiProcedure.params, UndoAiProcedure.returnType),
 );
 
 type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "tables"> & {
   tables: typeof tablesSchema.schemaType.tables & {
+    /** @deprecated Use `aiEvent` instead. This alias will be removed in the next major version. */
+    readonly "ai_event": Omit<typeof tablesSchema.schemaType.tables["aiEvent"], "accessorName"> & { readonly accessorName: "ai_event" };
     /** @deprecated Use `sceneMember` instead. This alias will be removed in the next major version. */
     readonly "scene_member": Omit<typeof tablesSchema.schemaType.tables["sceneMember"], "accessorName"> & { readonly accessorName: "scene_member" };
   };
@@ -182,6 +201,7 @@ const REMOTE_MODULE = {
 >;
 
 const tableAccessorAliases = {
+  "ai_event": "aiEvent",
   "scene_member": "sceneMember",
 } as const;
 
@@ -203,12 +223,16 @@ function __withTableAccessorAliases<T extends object>(target: T, freeze = false)
 
 type __DbViewBase = __DbConnectionImpl<typeof REMOTE_MODULE>["db"];
 export type DbView = __DbViewBase & {
+  /** @deprecated Use `aiEvent` instead. This alias will be removed in the next major version. */
+  readonly "ai_event": __DbViewBase["aiEvent"];
   /** @deprecated Use `sceneMember` instead. This alias will be removed in the next major version. */
   readonly "scene_member": __DbViewBase["sceneMember"];
 };
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
 export type Tables = __TablesBase & {
+  /** @deprecated Use `aiEvent` instead. This alias will be removed in the next major version. */
+  readonly "ai_event": __TablesBase["aiEvent"];
   /** @deprecated Use `sceneMember` instead. This alias will be removed in the next major version. */
   readonly "scene_member": __TablesBase["sceneMember"];
 };
