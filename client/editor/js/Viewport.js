@@ -906,6 +906,13 @@ function Viewport( editor ) {
 
 		}
 
+		// #SPACETIME synced objects popping in and the AI build marker: redraw while they move
+		if ( editor.multiplayer !== undefined && editor.multiplayer.updateMotion() === true ) {
+
+			needsUpdate = true;
+
+		}
+
 		if ( needsUpdate === true ) render();
 
 		updatePT();

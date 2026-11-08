@@ -80,11 +80,17 @@ panel.addEventListener( 'submit', async ( event ) => {
 	if ( multiplayer === null ) return show( 'Not connected to the database yet.', true );
 
 	setBusy( true );
-	show( 'Building… (this can take up to a minute)' );
+
+	// A live count, so a long build reads as progress rather than a hang. (A ring marks the spot: askAi.)
+	const started = performance.now();
+	const tick = () => show( `Claude is building… ${Math.floor( ( performance.now() - started ) / 1000 )}s` );
+	tick();
+	const ticker = setInterval( tick, 1000 );
 
 	try {
 
 		const result = await multiplayer.askAi( prompt, true ); // always the detailed model
+		clearInterval( ticker );
 		const done = result.added + result.changed + result.removed > 0;
 		show( describe( result, prompt ) );
 		undoButton.hidden = ! done;
@@ -92,10 +98,12 @@ panel.addEventListener( 'submit', async ( event ) => {
 
 	} catch ( error ) {
 
+		clearInterval( ticker );
 		show( error.message, true );
 
 	} finally {
 
+		clearInterval( ticker );
 		setBusy( false );
 		input.focus();
 

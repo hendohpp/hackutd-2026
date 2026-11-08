@@ -28,6 +28,18 @@ const MAX_NAME_CHARS = 24; // same limit as the server's set_name
 const NAME_KEY = 'collab3d/name'; // localStorage: the browser remembers your name, so new tabs reuse it
 const EPSILON = 1e-4;
 
+// New objects pop in (scale up with a little overshoot). Objects that arrive together (an AI build) start
+// one after another, POP_STAGGER apart, so the build assembles in the order the AI planned it.
+const POP_DURATION = 380; // ms
+const POP_STAGGER = 8; // ms
+const POP_MAX_DELAY = 1000; // ms
+
+// Where ask_ai builds: the spot on the ground the camera looks at. Same math and limits as looking_at in
+// server/src/ai.rs (LOOK_DISTANCE, MAX_LOOK_DISTANCE, WORLD_LIMIT): keep them in sync.
+const AI_LOOK_DISTANCE = 8;
+const AI_MAX_LOOK_DISTANCE = 30;
+const AI_WORLD_LIMIT = 200;
+
 // The kinds the database knows, built exactly like the editor's Add menu builds them.
 const KINDS = {
 	box: () => mesh( 'Box', new THREE.BoxGeometry( 1, 1, 1, 1, 1, 1 ) ),
@@ -58,6 +70,10 @@ class Multiplayer {
 		this.byObject = new WeakMap(); // THREE.Object3D -> sync state
 		this.applying = 0; // > 0 while applying database rows: ignore the editor signals they cause
 		this.sceneRefresh = null; // objects added/removed since the editor last heard (see queueSceneRefresh)
+		this.ready = false; // the scene has loaded once; from then on, new objects pop in
+		this.pops = new Map(); // THREE.Object3D -> { start, scale }: objects popping in (see updateMotion)
+		this.popBatch = { at: 0, count: 0 }; // objects started popping within the same moment, for the stagger
+		this.buildMarker = null; // the ring showing where the AI is building
 		this.selectedIds = new Set(); // synced objects in my selection (I hold, or am acquiring, their locks)
 		this.pendingAdds = 0;
 		this.viewers = new Map(); // identity hex -> camera marker for someone else's view
@@ -311,6 +327,7 @@ class Multiplayer {
 				setTransform( object, row );
 				setColor( object, row.color );
 				this.addQuietly( object );
+				if ( this.ready ) this.startPop( object ); // not when the scene first loads
 				changed = true;
 
 			}
@@ -320,10 +337,21 @@ class Multiplayer {
 
 			// Don't fight local edits that haven't round-tripped yet (a drag, or a send still in flight);
 			// reconcile() catches up afterwards.
+			// A popping object shows less than its real size: compare (and set) the real one.
+			const pop = this.pops.get( object );
+			if ( pop !== undefined ) object.scale.copy( pop.scale );
+
 			if ( object.userData.dragging !== true && s.transformsInFlight === 0 && s.transformTimer === null && sameTransform( object, row ) === false ) {
 
 				setTransform( object, row );
 				changed = true;
+
+			}
+
+			if ( pop !== undefined ) {
+
+				pop.scale.copy( object.scale ); // keep popping, to the (possibly new) real size
+				applyPop( object, pop, performance.now() );
 
 			}
 
@@ -377,6 +405,7 @@ class Multiplayer {
 			if ( selection.includes( s.object ) ) this.editor.selector.setSelection( selection.filter( ( o ) => o !== s.object ) );
 
 			this.removeLockVisual( s );
+			this.pops.delete( s.object );
 			this.removeQuietly( s.object );
 			disposeObject( s.object );
 
@@ -470,6 +499,134 @@ class Multiplayer {
 
 	}
 
+	// -------------------------------------------------------------------------------------------
+	// Motion: new objects pop in, and a ring marks where the AI is building. The viewport's animation
+	// loop calls updateMotion() every frame and redraws while it returns true (editor/js/Viewport.js, #SPACETIME).
+
+	startPop( object ) {
+
+		const now = performance.now();
+		if ( now - this.popBatch.at > 50 ) this.popBatch.count = 0; // a new batch
+		this.popBatch.at = now;
+
+		const delay = Math.min( this.popBatch.count ++ * POP_STAGGER, POP_MAX_DELAY );
+		const pop = { start: now + delay, scale: object.scale.clone() };
+		this.pops.set( object, pop );
+		applyPop( object, pop, now );
+
+	}
+
+	// Straight to the real size (before its transform is sent, or when it's removed).
+	finishPop( object ) {
+
+		const pop = this.pops.get( object );
+		if ( pop === undefined ) return;
+
+		object.scale.copy( pop.scale );
+		this.pops.delete( object );
+
+	}
+
+	updateMotion() {
+
+		const now = performance.now();
+		let moving = false;
+
+		for ( const [ object, pop ] of this.pops ) {
+
+			moving = true;
+
+			if ( object.parent === null || now >= pop.start + POP_DURATION ) {
+
+				this.finishPop( object );
+				if ( this.editor.selector.selection.includes( object ) ) this.requestRender( object ); // its selection box, at the real size
+
+			} else {
+
+				applyPop( object, pop, now );
+
+			}
+
+		}
+
+		const marker = this.buildMarker;
+
+		if ( marker !== null ) {
+
+			moving = true;
+			const fade = marker.end === null ? 1 : Math.max( 0, 1 - ( now - marker.end ) / 400 );
+
+			// A steady ring, and a second one that keeps spreading out from it and fading.
+			const wave = ( ( now - marker.start ) % 1400 ) / 1400;
+			marker.ring.material.opacity = 0.85 * fade;
+			marker.wave.scale.setScalar( 1 + wave * 1.6 );
+			marker.wave.material.opacity = 0.6 * ( 1 - wave ) * fade;
+
+			if ( fade === 0 ) this.removeBuildMarker();
+
+		}
+
+		return moving;
+
+	}
+
+	// Where ask_ai will build: the spot on the ground the camera looks at (looking_at in server/src/ai.rs).
+	lookSpot() {
+
+		const camera = this.editor.viewportCamera || this.editor.camera;
+		const eye = camera.getWorldPosition( new THREE.Vector3() );
+		const dir = camera.getWorldDirection( new THREE.Vector3() );
+		const flat = Math.max( Math.hypot( dir.x, dir.z ), 1e-6 );
+		const along = dir.y < - 0.05 ? - eye.y / dir.y * flat : AI_LOOK_DISTANCE;
+		const d = THREE.MathUtils.clamp( along, 0, AI_MAX_LOOK_DISTANCE );
+		const limit = ( v ) => THREE.MathUtils.clamp( v, - AI_WORLD_LIMIT, AI_WORLD_LIMIT );
+		return new THREE.Vector3( limit( eye.x + dir.x / flat * d ), 0, limit( eye.z + dir.z / flat * d ) );
+
+	}
+
+	showBuildMarker() {
+
+		this.removeBuildMarker();
+
+		const material = () => new THREE.MeshBasicMaterial( { color: 0x8b5cf6, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide } );
+		const ring = new THREE.Mesh( new THREE.RingGeometry( 1.7, 2, 64 ), material() );
+		const wave = new THREE.Mesh( new THREE.RingGeometry( 1.85, 2, 64 ), material() );
+		const group = new THREE.Group();
+		group.name = 'AI build marker';
+
+		for ( const mesh of [ ring, wave ] ) {
+
+			mesh.rotation.x = - Math.PI / 2; // lie flat on the ground
+			group.add( mesh );
+
+		}
+
+		const spot = this.lookSpot();
+		const camera = this.editor.viewportCamera || this.editor.camera;
+		group.position.set( spot.x, 0.03, spot.z );
+		group.scale.setScalar( Math.max( 1, camera.getWorldPosition( new THREE.Vector3() ).distanceTo( spot ) / 12 ) ); // readable from afar
+		this.editor.sceneHelpers.add( group );
+		this.buildMarker = { group, ring, wave, start: performance.now(), end: null };
+
+	}
+
+	// Fades out (updateMotion removes it).
+	hideBuildMarker() {
+
+		if ( this.buildMarker !== null && this.buildMarker.end === null ) this.buildMarker.end = performance.now();
+
+	}
+
+	removeBuildMarker() {
+
+		if ( this.buildMarker === null ) return;
+
+		this.editor.sceneHelpers.remove( this.buildMarker.group );
+		disposeObject( this.buildMarker.group );
+		this.buildMarker = null;
+
+	}
+
 	// Subscription (re)applied: make the scene match the cache exactly.
 	syncAll() {
 
@@ -491,6 +648,7 @@ class Multiplayer {
 		this.refreshPeople();
 		this.refreshServerName();
 		this.ensureName(); // my user row is in the cache now
+		this.ready = true;
 
 	}
 
@@ -563,6 +721,7 @@ class Multiplayer {
 
 	queueTransform( s ) {
 
+		this.finishPop( s.object ); // only ever send the real size, never a popping one
 		if ( sameTransform( s.object, s.row ) && s.transformTimer === null ) return;
 		if ( s.transformTimer !== null ) return; // already scheduled; it reads the latest values
 
@@ -723,9 +882,19 @@ class Multiplayer {
 
 		if ( this.connected === false ) throw new Error( 'Not connected to the database yet.' );
 
-		const result = await this.conn.procedures.askAi( { sceneId: SCENE_ID, prompt, detailed } );
-		if ( 'err' in result ) throw new Error( result.err );
-		return result.ok;
+		this.showBuildMarker();
+
+		try {
+
+			const result = await this.conn.procedures.askAi( { sceneId: SCENE_ID, prompt, detailed } );
+			if ( 'err' in result ) throw new Error( result.err );
+			return result.ok;
+
+		} finally {
+
+			this.hideBuildMarker();
+
+		}
 
 	}
 
@@ -1703,6 +1872,22 @@ function disposeObject( object ) {
 		child.dispose?.(); // lights
 
 	} );
+
+}
+
+// A popping object's size: its real size times an ease-out with a little overshoot (nothing -> ~1.1 -> 1).
+function applyPop( object, pop, now ) {
+
+	const t = THREE.MathUtils.clamp( ( now - pop.start ) / POP_DURATION, 0, 1 );
+	object.scale.copy( pop.scale ).multiplyScalar( Math.max( easeOutBack( t ), 1e-3 ) );
+
+}
+
+function easeOutBack( t ) {
+
+	const c1 = 1.70158;
+	const c3 = c1 + 1;
+	return 1 + c3 * Math.pow( t - 1, 3 ) + c1 * Math.pow( t - 1, 2 );
 
 }
 
