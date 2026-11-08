@@ -28,6 +28,18 @@ const MAX_NAME_CHARS = 24; // same limit as the server's set_name
 const NAME_KEY = 'collab3d/name'; // localStorage: the browser remembers your name, so new tabs reuse it
 const EPSILON = 1e-4;
 
+// New objects pop in (scale up with a little overshoot). Objects that arrive together (an AI build) start
+// one after another, POP_STAGGER apart, so the build assembles in the order the AI planned it.
+const POP_DURATION = 380; // ms
+const POP_STAGGER = 8; // ms
+const POP_MAX_DELAY = 1000; // ms
+
+// Where ask_ai builds: the spot on the ground the camera looks at. Same math and limits as looking_at in
+// server/src/ai.rs (LOOK_DISTANCE, MAX_LOOK_DISTANCE, WORLD_LIMIT): keep them in sync.
+const AI_LOOK_DISTANCE = 8;
+const AI_MAX_LOOK_DISTANCE = 150;
+const AI_WORLD_LIMIT = 1000;
+
 // The kinds the database knows, built exactly like the editor's Add menu builds them.
 const KINDS = {
 	box: () => mesh( 'Box', new THREE.BoxGeometry( 1, 1, 1, 1, 1, 1 ) ),
@@ -57,6 +69,14 @@ class Multiplayer {
 		this.byId = new Map(); // row id (string) -> sync state { id, object, row, ... }
 		this.byObject = new WeakMap(); // THREE.Object3D -> sync state
 		this.applying = 0; // > 0 while applying database rows: ignore the editor signals they cause
+		this.sceneRefresh = null; // objects added/removed since the editor last heard (see queueSceneRefresh)
+		this.ready = false; // the scene has loaded once; from then on, new objects pop in
+		this.pops = new Map(); // THREE.Object3D -> { start, scale }: objects popping in (see updateMotion)
+		this.popBatch = { at: 0, count: 0 }; // objects started popping within the same moment, for the stagger
+		this.buildMarker = null; // the ring showing where the AI is building
+		this.animations = new Map(); // object id (string) -> animation row (server/src/animation.rs), played in updateMotion
+		this.pausedAnimations = new Set(); // object ids whose animation waits while I have them selected
+		this.serverClockOffset = null; // ms to add to Date.now() for the server's clock (see sampleClock)
 		this.selectedIds = new Set(); // synced objects in my selection (I hold, or am acquiring, their locks)
 		this.pendingAdds = 0;
 		this.viewers = new Map(); // identity hex -> camera marker for someone else's view
@@ -217,6 +237,23 @@ class Multiplayer {
 			.onError( ( _ctx, error ) => console.warn( '[collab3d] other people\'s cameras are unavailable:', error ) )
 			.subscribe( [ tables.viewer.where( ( r ) => r.sceneId.eq( SCENE_ID ) ) ] );
 
+		// Animations too.
+		db.animation.onInsert( ( _ctx, row ) => this.applyAnimation( row ) );
+		db.animation.onUpdate( ( _ctx, _oldRow, row ) => this.applyAnimation( row ) );
+		db.animation.onDelete( ( _ctx, row ) => this.removeAnimation( row ) );
+
+		// The server's clock, to play animations in step: changes from my own calls say when they ran there.
+		for ( const table of [ db.object, db.presence, db.viewer, db.animation ] ) {
+
+			table.onInsert( ( ctx ) => this.sampleClock( ctx ) );
+			table.onUpdate( ( ctx ) => this.sampleClock( ctx ) );
+
+		}
+
+		this.conn.subscriptionBuilder()
+			.onError( ( _ctx, error ) => console.warn( '[collab3d] animations are unavailable:', error ) )
+			.subscribe( [ tables.animation.where( ( r ) => r.sceneId.eq( SCENE_ID ) ) ] );
+
 		if ( this.renewTimer === undefined ) this.renewTimer = setInterval( () => this.renewLocks(), LOCK_RENEW_INTERVAL );
 
 	}
@@ -247,6 +284,10 @@ class Multiplayer {
 
 		this.sendPresence( true );
 		this.sendViewer( true );
+
+		// A few more calls early on give the server-clock estimate (sampleClock, for animations) good samples
+		// even if this tab just watches.
+		for ( const delay of [ 1000, 2000, 3500 ] ) setTimeout( () => this.sendPresence( true ), delay );
 
 		// After a reconnect the server has released our locks: take them again.
 		for ( const id of this.selectedIds ) this.acquire( id );
@@ -288,6 +329,7 @@ class Multiplayer {
 
 		const id = row.id.toString();
 		let s = this.byId.get( id );
+		const isNew = s === undefined;
 
 		this.applying ++;
 
@@ -295,7 +337,7 @@ class Multiplayer {
 
 			let changed = false;
 
-			if ( s === undefined ) {
+			if ( isNew ) {
 
 				const make = Object.hasOwn( KINDS, row.kind ) ? KINDS[ row.kind ]
 					: ASSET_KIND.test( row.kind ) ? assetKind( row.kind, this.editor ) : unknownKind( row.kind );
@@ -308,7 +350,8 @@ class Multiplayer {
 
 				setTransform( object, row );
 				setColor( object, row.color );
-				this.editor.addObject( object );
+				this.addQuietly( object );
+				if ( this.ready ) this.startPop( object ); // not when the scene first loads
 				changed = true;
 
 			}
@@ -318,10 +361,31 @@ class Multiplayer {
 
 			// Don't fight local edits that haven't round-tripped yet (a drag, or a send still in flight);
 			// reconcile() catches up afterwards.
-			if ( object.userData.dragging !== true && s.transformsInFlight === 0 && s.transformTimer === null && sameTransform( object, row ) === false ) {
+			// A popping object shows less than its real size: compare (and set) the real one.
+			const pop = this.pops.get( object );
+			if ( pop !== undefined ) object.scale.copy( pop.scale );
+
+			if ( this.animations.has( id ) && this.pausedAnimations.has( id ) === false ) {
+
+				// Animated: updateMotion places it every frame from this row. Only its size comes from here.
+				if ( object.scale.x !== row.scale.x || object.scale.y !== row.scale.y || object.scale.z !== row.scale.z ) {
+
+					object.scale.set( row.scale.x, row.scale.y, row.scale.z );
+					changed = true;
+
+				}
+
+			} else if ( object.userData.dragging !== true && s.transformsInFlight === 0 && s.transformTimer === null && sameTransform( object, row ) === false ) {
 
 				setTransform( object, row );
 				changed = true;
+
+			}
+
+			if ( pop !== undefined ) {
+
+				pop.scale.copy( object.scale ); // keep popping, to the (possibly new) real size
+				applyPop( object, pop, performance.now() );
 
 			}
 
@@ -335,13 +399,18 @@ class Multiplayer {
 
 			if ( this.updateLockVisual( s ) ) changed = true;
 
-			// Objects moved: gaze lines may now hit something else.
-			if ( changed && this.viewers.size > 0 ) this.refreshGazes();
+			// New objects: the editor hears about them in queueSceneRefresh's once-per-frame update instead.
+			if ( isNew === false ) {
 
-			// Only signal real changes: echoes of my own edits must not touch the editor mid-drag
-			// (objectChanged re-anchors a multi-selection's pivot).
-			if ( changed || colorChanged ) this.editor.signals.objectChanged.dispatch( object ); // re-render, refresh sidebar and helpers
-			if ( colorChanged && object.material ) this.editor.signals.materialChanged.dispatch( object, 0 );
+				// Objects moved: gaze lines may now hit something else.
+				if ( changed && this.viewers.size > 0 ) this.refreshGazes();
+
+				// Only signal real changes: echoes of my own edits must not touch the editor mid-drag
+				// (objectChanged re-anchors a multi-selection's pivot).
+				if ( changed || colorChanged ) this.editor.signals.objectChanged.dispatch( object ); // re-render, refresh sidebar and helpers
+				if ( colorChanged && object.material ) this.editor.signals.materialChanged.dispatch( object, 0 );
+
+			}
 
 		} finally {
 
@@ -370,7 +439,8 @@ class Multiplayer {
 			if ( selection.includes( s.object ) ) this.editor.selector.setSelection( selection.filter( ( o ) => o !== s.object ) );
 
 			this.removeLockVisual( s );
-			this.editor.removeObject( s.object );
+			this.pops.delete( s.object );
+			this.removeQuietly( s.object );
 			disposeObject( s.object );
 
 		} finally {
@@ -379,12 +449,291 @@ class Multiplayer {
 
 		}
 
-		if ( this.viewers.size > 0 ) {
+	}
 
-			this.refreshGazes();
+	// An AI build arrives as one transaction with up to hundreds of rows. Telling the editor about each
+	// object (editor.addObject / removeObject) redraws the viewport and rebuilds the outliner once per
+	// object, which froze the page for seconds. Rows are added and removed quietly instead, and the
+	// editor hears about them once per frame.
+	addQuietly( object ) {
+
+		const editor = this.editor;
+
+		object.traverse( ( child ) => { // as editor.addObject does
+
+			if ( child.geometry !== undefined ) editor.addGeometry( child.geometry );
+			if ( child.material !== undefined ) editor.addMaterial( child.material );
+			editor.addCamera( child );
+			editor.addHelper( child );
+
+		} );
+		editor.scene.add( object );
+		this.queueSceneRefresh( 'added', object );
+
+	}
+
+	removeQuietly( object ) {
+
+		const editor = this.editor;
+		if ( object.parent === null ) return;
+
+		object.traverse( ( child ) => { // as editor.removeObject does
+
+			editor.removeCamera( child );
+			editor.removeHelper( child );
+			if ( child.material !== undefined ) editor.removeMaterial( child.material );
+
+		} );
+		object.parent.remove( object );
+		this.queueSceneRefresh( 'removed', object );
+
+	}
+
+	// change: 'added' / 'removed' (with the object), or nothing (e.g. a 3D model finished loading).
+	queueSceneRefresh( change, object ) {
+
+		if ( this.sceneRefresh === null ) {
+
+			this.sceneRefresh = { added: null, removed: null };
+			requestAnimationFrame( () => this.flushSceneRefresh() );
+
+		}
+
+		if ( change !== undefined ) this.sceneRefresh[ change ] = object;
+
+	}
+
+	flushSceneRefresh() {
+
+		const { added, removed } = this.sceneRefresh;
+		this.sceneRefresh = null;
+		const signals = this.editor.signals;
+
+		this.applying ++;
+
+		try {
+
+			// Their listeners (object counts, animation list) recount the whole scene, so once each is enough.
+			if ( added !== null ) signals.objectAdded.dispatch( added );
+			if ( removed !== null ) signals.objectRemoved.dispatch( removed );
+			signals.sceneGraphChanged.dispatch(); // outliner + redraw
+
+		} finally {
+
+			this.applying --;
+
+		}
+
+		if ( ( added !== null || removed !== null ) && this.viewers.size > 0 ) {
+
+			this.refreshGazes(); // objects came or went: gaze lines may now hit something else
 			this.requestRender();
 
 		}
+
+	}
+
+	// -------------------------------------------------------------------------------------------
+	// Motion: new objects pop in, and a ring marks where the AI is building. The viewport's animation
+	// loop calls updateMotion() every frame and redraws while it returns true (editor/js/Viewport.js, #SPACETIME).
+
+	startPop( object ) {
+
+		const now = performance.now();
+		if ( now - this.popBatch.at > 50 ) this.popBatch.count = 0; // a new batch
+		this.popBatch.at = now;
+
+		const delay = Math.min( this.popBatch.count ++ * POP_STAGGER, POP_MAX_DELAY );
+		const pop = { start: now + delay, scale: object.scale.clone() };
+		this.pops.set( object, pop );
+		applyPop( object, pop, now );
+
+	}
+
+	// Straight to the real size (before its transform is sent, or when it's removed).
+	finishPop( object ) {
+
+		const pop = this.pops.get( object );
+		if ( pop === undefined ) return;
+
+		object.scale.copy( pop.scale );
+		this.pops.delete( object );
+
+	}
+
+	updateMotion() {
+
+		const now = performance.now();
+		let moving = false;
+
+		for ( const [ object, pop ] of this.pops ) {
+
+			moving = true;
+
+			if ( object.parent === null || now >= pop.start + POP_DURATION ) {
+
+				this.finishPop( object );
+				if ( this.editor.selector.selection.includes( object ) ) this.requestRender( object ); // its selection box, at the real size
+
+			} else {
+
+				applyPop( object, pop, now );
+
+			}
+
+		}
+
+		if ( this.animations.size > 0 ) {
+
+			const seconds = this.serverNow() / 1000;
+
+			for ( const [ id, anim ] of this.animations ) {
+
+				const s = this.byId.get( id );
+				if ( s === undefined ) continue;
+
+				// Mine to edit right now: show where it really is (its row), so the gizmo and my edits use that.
+				if ( this.selectedIds.has( id ) || s.object.userData.dragging === true ) {
+
+					if ( this.pausedAnimations.has( id ) === false ) {
+
+						this.pausedAnimations.add( id );
+						restPose( s.object, s.row );
+						this.requestRender( s.object ); // the selection box, around where it really is
+
+					}
+
+					continue;
+
+				}
+
+				this.pausedAnimations.delete( id );
+				animatePose( s.object, s.row, anim, seconds );
+				moving = true;
+
+			}
+
+		}
+
+		const marker = this.buildMarker;
+
+		if ( marker !== null ) {
+
+			moving = true;
+			const fade = marker.end === null ? 1 : Math.max( 0, 1 - ( now - marker.end ) / 400 );
+
+			// A steady ring, and a second one that keeps spreading out from it and fading.
+			const wave = ( ( now - marker.start ) % 1400 ) / 1400;
+			marker.ring.material.opacity = 0.85 * fade;
+			marker.wave.scale.setScalar( 1 + wave * 1.6 );
+			marker.wave.material.opacity = 0.6 * ( 1 - wave ) * fade;
+
+			if ( fade === 0 ) this.removeBuildMarker();
+
+		}
+
+		return moving;
+
+	}
+
+	applyAnimation( row ) {
+
+		if ( row.sceneId !== SCENE_ID ) return;
+		this.animations.set( row.objectId.toString(), row );
+
+	}
+
+	removeAnimation( row ) {
+
+		const id = row.objectId.toString();
+		this.animations.delete( id );
+		this.pausedAnimations.delete( id );
+
+		// Back to where it really is.
+		const s = this.byId.get( id );
+
+		if ( s !== undefined ) {
+
+			restPose( s.object, s.row );
+			this.requestRender( s.object );
+
+		}
+
+	}
+
+	// A change from one of my own reducer calls carries the server's time when the call ran, and reaches me
+	// a little later: the smallest gap seen is the best guess of the clock difference. (Rows from a
+	// subscription snapshot, or from other people's calls, don't say when they ran.) Animations play on the
+	// server's clock, so everyone sees the same moment of the same motion.
+	sampleClock( ctx ) {
+
+		if ( ctx.event?.tag !== 'Reducer' ) return;
+
+		const sample = Number( ctx.event.value.timestamp.microsSinceUnixEpoch / 1000n ) - Date.now();
+		this.serverClockOffset = this.serverClockOffset === null ? sample : Math.max( this.serverClockOffset, sample );
+
+	}
+
+	serverNow() {
+
+		return Date.now() + ( this.serverClockOffset ?? 0 );
+
+	}
+
+	// Where ask_ai will build: the spot on the ground the camera looks at (looking_at in server/src/ai.rs).
+	lookSpot() {
+
+		const camera = this.editor.viewportCamera || this.editor.camera;
+		const eye = camera.getWorldPosition( new THREE.Vector3() );
+		const dir = camera.getWorldDirection( new THREE.Vector3() );
+		const flat = Math.max( Math.hypot( dir.x, dir.z ), 1e-6 );
+		const along = dir.y < - 0.05 ? - eye.y / dir.y * flat : AI_LOOK_DISTANCE;
+		const d = THREE.MathUtils.clamp( along, 0, AI_MAX_LOOK_DISTANCE );
+		const limit = ( v ) => THREE.MathUtils.clamp( v, - AI_WORLD_LIMIT, AI_WORLD_LIMIT );
+		return new THREE.Vector3( limit( eye.x + dir.x / flat * d ), 0, limit( eye.z + dir.z / flat * d ) );
+
+	}
+
+	showBuildMarker() {
+
+		this.removeBuildMarker();
+
+		const material = () => new THREE.MeshBasicMaterial( { color: 0x8b5cf6, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide } );
+		const ring = new THREE.Mesh( new THREE.RingGeometry( 1.7, 2, 64 ), material() );
+		const wave = new THREE.Mesh( new THREE.RingGeometry( 1.85, 2, 64 ), material() );
+		const group = new THREE.Group();
+		group.name = 'AI build marker';
+
+		for ( const mesh of [ ring, wave ] ) {
+
+			mesh.rotation.x = - Math.PI / 2; // lie flat on the ground
+			group.add( mesh );
+
+		}
+
+		const spot = this.lookSpot();
+		const camera = this.editor.viewportCamera || this.editor.camera;
+		group.position.set( spot.x, 0.03, spot.z );
+		group.scale.setScalar( Math.max( 1, camera.getWorldPosition( new THREE.Vector3() ).distanceTo( spot ) / 12 ) ); // readable from afar
+		this.editor.sceneHelpers.add( group );
+		this.buildMarker = { group, ring, wave, start: performance.now(), end: null };
+
+	}
+
+	// Fades out (updateMotion removes it).
+	hideBuildMarker() {
+
+		if ( this.buildMarker !== null && this.buildMarker.end === null ) this.buildMarker.end = performance.now();
+
+	}
+
+	removeBuildMarker() {
+
+		if ( this.buildMarker === null ) return;
+
+		this.editor.sceneHelpers.remove( this.buildMarker.group );
+		disposeObject( this.buildMarker.group );
+		this.buildMarker = null;
 
 	}
 
@@ -409,6 +758,7 @@ class Multiplayer {
 		this.refreshPeople();
 		this.refreshServerName();
 		this.ensureName(); // my user row is in the cache now
+		this.ready = true;
 
 	}
 
@@ -481,6 +831,7 @@ class Multiplayer {
 
 	queueTransform( s ) {
 
+		this.finishPop( s.object ); // only ever send the real size, never a popping one
 		if ( sameTransform( s.object, s.row ) && s.transformTimer === null ) return;
 		if ( s.transformTimer !== null ) return; // already scheduled; it reads the latest values
 
@@ -641,9 +992,19 @@ class Multiplayer {
 
 		if ( this.connected === false ) throw new Error( 'Not connected to the database yet.' );
 
-		const result = await this.conn.procedures.askAi( { sceneId: SCENE_ID, prompt, detailed } );
-		if ( 'err' in result ) throw new Error( result.err );
-		return result.ok;
+		this.showBuildMarker();
+
+		try {
+
+			const result = await this.conn.procedures.askAi( { sceneId: SCENE_ID, prompt, detailed } );
+			if ( 'err' in result ) throw new Error( result.err );
+			return result.ok;
+
+		} finally {
+
+			this.hideBuildMarker();
+
+		}
 
 	}
 
@@ -1531,11 +1892,14 @@ function assetKind( kind, editor ) {
 				// Own copies, so removing this object (disposeObject) doesn't break other copies.
 				child.geometry = child.geometry.clone();
 				child.material = Array.isArray( child.material ) ? child.material.map( ( m ) => m.clone() ) : child.material.clone();
-				child.userData.object = group;
+				// Not enumerable, so JSON (File > Save, exporters) skips it instead of looping part -> model -> part.
+				Object.defineProperty( child.userData, 'object', { value: group, configurable: true, writable: true } );
 
 			} );
 			group.add( copy );
-			editor.signals.sceneGraphChanged.dispatch(); // redraw, and make the new parts clickable
+			// Redraw, and make the new parts clickable. Once per frame: many copies of one model finish together.
+			if ( editor.multiplayer ) editor.multiplayer.queueSceneRefresh();
+			else editor.signals.sceneGraphChanged.dispatch();
 
 		} ).catch( ( error ) => console.warn( `[coscene] couldn't load model ${path}:`, error ) );
 
@@ -1619,6 +1983,123 @@ function disposeObject( object ) {
 		child.dispose?.(); // lights
 
 	} );
+
+}
+
+// A popping object's size: its real size times an ease-out with a little overshoot (nothing -> ~1.1 -> 1).
+function applyPop( object, pop, now ) {
+
+	const t = THREE.MathUtils.clamp( ( now - pop.start ) / POP_DURATION, 0, 1 );
+	object.scale.copy( pop.scale ).multiplyScalar( Math.max( easeOutBack( t ), 1e-3 ) );
+
+}
+
+function easeOutBack( t ) {
+
+	const c1 = 1.70158;
+	const c3 = c1 + 1;
+	return 1 + c3 * Math.pow( t - 1, 3 ) + c1 * Math.pow( t - 1, 2 );
+
+}
+
+// Animations (server/src/animation.rs): where an object is `seconds` (server clock) into its animation,
+// worked out from its row (where it rests) every frame. Its size isn't touched (it may be popping in).
+
+const _animRest = new THREE.Vector3();
+const _animRestQuaternion = new THREE.Quaternion();
+const _animTurn = new THREE.Quaternion();
+const _animAxis = new THREE.Vector3();
+const _animPivot = new THREE.Vector3();
+const _animEuler = new THREE.Euler();
+const ANIM_UP = new THREE.Vector3( 0, 1, 0 );
+
+function restPose( object, row ) {
+
+	object.position.set( row.position.x, row.position.y, row.position.z );
+	object.rotation.set( row.rotation.x, row.rotation.y, row.rotation.z );
+
+}
+
+function animatePose( object, row, anim, seconds ) {
+
+	const started = Number( anim.startedAt.microsSinceUnixEpoch / 1000n ) / 1000;
+	const cycle = ( seconds - started ) / anim.period + anim.phase; // turns, swings or loops since it started
+	_animRest.set( row.position.x, row.position.y, row.position.z );
+	_animRestQuaternion.setFromEuler( _animEuler.set( row.rotation.x, row.rotation.y, row.rotation.z ) );
+	_animAxis.set( anim.axis.x, anim.axis.y, anim.axis.z );
+
+	switch ( anim.kind ) {
+
+		case 'spin':
+		case 'orbit':
+		case 'sway': {
+
+			const angle = anim.kind === 'sway'
+				? THREE.MathUtils.degToRad( anim.amount ) * Math.sin( cycle * Math.PI * 2 )
+				: cycle * Math.PI * 2 * ( anim.amount < 0 ? - 1 : 1 );
+			_animTurn.setFromAxisAngle( _animAxis, angle );
+			_animPivot.set( _animRest.x + anim.pivot.x, _animRest.y + anim.pivot.y, _animRest.z + anim.pivot.z );
+			object.position.copy( _animRest ).sub( _animPivot ).applyQuaternion( _animTurn ).add( _animPivot );
+			if ( anim.kind === 'orbit' ) object.quaternion.copy( _animRestQuaternion ); // keeps facing the same way
+			else object.quaternion.copy( _animTurn ).multiply( _animRestQuaternion );
+			break;
+
+		}
+
+		case 'bob':
+
+			object.position.copy( _animRest ).addScaledVector( _animAxis, anim.amount * Math.sin( cycle * Math.PI * 2 ) );
+			object.quaternion.copy( _animRestQuaternion );
+			break;
+
+		case 'path':
+
+			followPath( object, anim.path, cycle );
+			break;
+
+	}
+
+}
+
+// Along the loop through the path's points (offsets from where it rests), at constant speed, facing where
+// it's going: turned from its resting rotation by how much the current leg turns from the first one
+// (it was placed facing the first leg).
+function followPath( object, offsets, cycle ) {
+
+	const n = offsets.length;
+	const point = ( i, target ) => target.set( _animRest.x + offsets[ i % n ].x, _animRest.y + offsets[ i % n ].y, _animRest.z + offsets[ i % n ].z );
+	const a = new THREE.Vector3();
+	const b = new THREE.Vector3();
+	const legs = [];
+	let total = 0;
+
+	for ( let i = 0; i < n; i ++ ) {
+
+		const length = point( i, a ).distanceTo( point( i + 1, b ) );
+		legs.push( length );
+		total += length;
+
+	}
+
+	if ( total < 1e-6 ) return void point( 0, object.position );
+
+	let along = ( ( cycle % 1 ) + 1 ) % 1 * total;
+	let leg = 0;
+
+	while ( leg < n - 1 && along > legs[ leg ] ) {
+
+		along -= legs[ leg ];
+		leg ++;
+
+	}
+
+	point( leg, a );
+	point( leg + 1, b );
+	object.position.copy( a ).lerp( b, legs[ leg ] > 0 ? along / legs[ leg ] : 0 );
+
+	const heading = ( from, to ) => Math.atan2( to.x - from.x, to.z - from.z );
+	const turn = heading( a, b ) - heading( point( 0, new THREE.Vector3() ), point( 1, new THREE.Vector3() ) );
+	object.quaternion.setFromAxisAngle( ANIM_UP, turn ).multiply( _animRestQuaternion );
 
 }
 

@@ -68,6 +68,26 @@ export const AiUndo = __t.object("AiUndo", {
 });
 export type AiUndo = __Infer<typeof AiUndo>;
 
+export const Animation = __t.object("Animation", {
+  objectId: __t.u64(),
+  sceneId: __t.u64(),
+  kind: __t.string(),
+  get axis() {
+    return Vec3;
+  },
+  period: __t.f32(),
+  amount: __t.f32(),
+  get pivot() {
+    return Vec3;
+  },
+  get path() {
+    return __t.array(Vec3);
+  },
+  phase: __t.f32(),
+  startedAt: __t.timestamp(),
+});
+export type Animation = __Infer<typeof Animation>;
+
 export const LockExpiry = __t.object("LockExpiry", {
   scheduledId: __t.u64(),
   scheduledAt: __t.scheduleAt(),

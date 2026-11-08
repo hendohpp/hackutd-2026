@@ -34,6 +34,7 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import ClearAnimationReducer from "./clear_animation_reducer";
 import CreateObjectReducer from "./create_object_reducer";
 import CreateSceneReducer from "./create_scene_reducer";
 import DeleteObjectReducer from "./delete_object_reducer";
@@ -41,6 +42,7 @@ import JoinSceneReducer from "./join_scene_reducer";
 import JoinWithCodeReducer from "./join_with_code_reducer";
 import LockObjectReducer from "./lock_object_reducer";
 import SetAiKeyReducer from "./set_ai_key_reducer";
+import SetAnimationReducer from "./set_animation_reducer";
 import SetClaudeKeyReducer from "./set_claude_key_reducer";
 import SetNameReducer from "./set_name_reducer";
 import UnlockObjectReducer from "./unlock_object_reducer";
@@ -55,6 +57,7 @@ import * as UndoAiProcedure from "./undo_ai_procedure";
 
 // Import all table schema definitions
 import AiEventRow from "./ai_event_table";
+import AnimationRow from "./animation_table";
 import MyServersRow from "./my_servers_table";
 import ObjectRow from "./object_table";
 import PresenceRow from "./presence_table";
@@ -81,6 +84,20 @@ const tablesSchema = __schema({
       { name: 'ai_event_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, AiEventRow),
+  animation: __table({
+    name: 'animation',
+    indexes: [
+      { accessor: 'object_id', name: 'animation_object_id_idx_btree', algorithm: 'btree', columns: [
+        'objectId',
+      ] },
+      { accessor: 'scene_id', name: 'animation_scene_id_idx_btree', algorithm: 'btree', columns: [
+        'sceneId',
+      ] },
+    ],
+    constraints: [
+      { name: 'animation_object_id_key', constraint: 'unique', columns: ['objectId'] },
+    ],
+  }, AnimationRow),
   object: __table({
     name: 'object',
     indexes: [
@@ -170,6 +187,7 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("clear_animation", ClearAnimationReducer),
   __reducerSchema("create_object", CreateObjectReducer),
   __reducerSchema("create_scene", CreateSceneReducer),
   __reducerSchema("delete_object", DeleteObjectReducer),
@@ -177,6 +195,7 @@ const reducersSchema = __reducers(
   __reducerSchema("join_with_code", JoinWithCodeReducer),
   __reducerSchema("lock_object", LockObjectReducer),
   __reducerSchema("set_ai_key", SetAiKeyReducer),
+  __reducerSchema("set_animation", SetAnimationReducer),
   __reducerSchema("set_claude_key", SetClaudeKeyReducer),
   __reducerSchema("set_name", SetNameReducer),
   __reducerSchema("unlock_object", UnlockObjectReducer),

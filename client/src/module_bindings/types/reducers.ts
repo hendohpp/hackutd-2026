@@ -6,6 +6,7 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import ClearAnimationReducer from "../clear_animation_reducer";
 import CreateObjectReducer from "../create_object_reducer";
 import CreateSceneReducer from "../create_scene_reducer";
 import DeleteObjectReducer from "../delete_object_reducer";
@@ -13,6 +14,7 @@ import JoinSceneReducer from "../join_scene_reducer";
 import JoinWithCodeReducer from "../join_with_code_reducer";
 import LockObjectReducer from "../lock_object_reducer";
 import SetAiKeyReducer from "../set_ai_key_reducer";
+import SetAnimationReducer from "../set_animation_reducer";
 import SetClaudeKeyReducer from "../set_claude_key_reducer";
 import SetNameReducer from "../set_name_reducer";
 import UnlockObjectReducer from "../unlock_object_reducer";
@@ -21,6 +23,7 @@ import UpdateObjectColorReducer from "../update_object_color_reducer";
 import UpdateObjectTransformReducer from "../update_object_transform_reducer";
 import UpdateViewerReducer from "../update_viewer_reducer";
 
+export type ClearAnimationParams = __Infer<typeof ClearAnimationReducer>;
 export type CreateObjectParams = __Infer<typeof CreateObjectReducer>;
 export type CreateSceneParams = __Infer<typeof CreateSceneReducer>;
 export type DeleteObjectParams = __Infer<typeof DeleteObjectReducer>;
@@ -28,6 +31,7 @@ export type JoinSceneParams = __Infer<typeof JoinSceneReducer>;
 export type JoinWithCodeParams = __Infer<typeof JoinWithCodeReducer>;
 export type LockObjectParams = __Infer<typeof LockObjectReducer>;
 export type SetAiKeyParams = __Infer<typeof SetAiKeyReducer>;
+export type SetAnimationParams = __Infer<typeof SetAnimationReducer>;
 export type SetClaudeKeyParams = __Infer<typeof SetClaudeKeyReducer>;
 export type SetNameParams = __Infer<typeof SetNameReducer>;
 export type UnlockObjectParams = __Infer<typeof UnlockObjectReducer>;

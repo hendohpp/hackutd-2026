@@ -21,6 +21,8 @@ import { MultiCmdsCommand } from './commands/MultiCmdsCommand.js';
 import { ColorEnvironment } from 'three/addons/environments/ColorEnvironment.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { ViewportPathtracer } from './Viewport.Pathtracer.js';
+import { ViewportSky } from '../../src/sky.js'; // #SPACETIME sky, ground and daylight for the default look
+import { segmentedGrid } from '../../src/grid.js'; // #SPACETIME a 200 m grid that draws from inside it too
 
 function Viewport( editor ) {
 
@@ -43,6 +45,7 @@ function Viewport( editor ) {
 	let camera = editor.camera;
 	const scene = editor.scene;
 	const sceneHelpers = editor.sceneHelpers;
+	const viewportSky = new ViewportSky(); // #SPACETIME drawn behind the scene while its background is "Default"
 
 	// helpers
 
@@ -51,12 +54,12 @@ function Viewport( editor ) {
 
 	const grid = new THREE.Group();
 
-	const grid1 = new THREE.GridHelper( 30, 30 );
+	const grid1 = segmentedGrid( 200, 200 ); // #SPACETIME 200 m (was a 30 m GridHelper), for bigger builds
 	grid1.material.color.setHex( GRID_COLORS_LIGHT[ 0 ] );
 	grid1.material.vertexColors = false;
 	grid.add( grid1 );
 
-	const grid2 = new THREE.GridHelper( 30, 6 );
+	const grid2 = segmentedGrid( 200, 40 ); // #SPACETIME every 5 m, as before
 	grid2.material.color.setHex( GRID_COLORS_LIGHT[ 1 ] );
 	grid2.material.vertexColors = false;
 	grid.add( grid2 );
@@ -665,7 +668,8 @@ function Viewport( editor ) {
 
 				} else {
 
-					scene.environment = pmremGenerator.fromScene( new RoomEnvironment(), 0.04 ).texture;
+					// #SPACETIME daylight from the default sky (src/sky.js) instead of the gray room
+					scene.environment = viewportSky.environment( pmremGenerator );
 
 				}
 
@@ -906,6 +910,13 @@ function Viewport( editor ) {
 
 		}
 
+		// #SPACETIME synced objects popping in and the AI build marker: redraw while they move
+		if ( editor.multiplayer !== undefined && editor.multiplayer.updateMotion() === true ) {
+
+			needsUpdate = true;
+
+		}
+
 		if ( needsUpdate === true ) render();
 
 		updatePT();
@@ -975,7 +986,17 @@ function Viewport( editor ) {
 		startTime = performance.now();
 
 		renderer.setViewport( 0, 0, container.dom.offsetWidth, container.dom.offsetHeight );
+
+		// #SPACETIME the default look: sky and ground first (src/sky.js), then the scene over them
+		if ( scene.background === null ) {
+
+			viewportSky.render( renderer, editor.viewportCamera );
+			renderer.autoClear = false;
+
+		}
+
 		renderer.render( scene, editor.viewportCamera );
+		renderer.autoClear = true;
 
 		if ( camera === editor.viewportCamera ) {
 
