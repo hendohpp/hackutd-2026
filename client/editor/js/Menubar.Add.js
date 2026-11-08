@@ -10,10 +10,9 @@ import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
 
 function MenubarAdd( editor ) {
 
-	// #SPACETIME add_object (Phase 4): only Box, Sphere, Cylinder, Plane and Point light are synced.
-	// Their onClick handlers call add_object( crypto.randomUUID(), kind, px, py, pz, color ) instead of
-	// AddObjectCommand. Don't add the mesh here: it appears when the new row arrives (applyRow).
-	// Every other option (Group, Capsule, Text, other lights, cameras, ...) gets hidden or disabled.
+	// #SPACETIME only Box, Sphere, Cylinder, Plane and Point light are synced. Their onClick handlers
+	// call create_object through editor.multiplayer instead of adding a local object: the object
+	// appears when the new row arrives (applyRow). Every other option is hidden at the end.
 
 	const strings = editor.strings;
 
@@ -74,7 +73,8 @@ function MenubarAdd( editor ) {
 	option.setTextContent( strings.getKey( 'menubar/add/mesh/box' ) );
 	option.onClick( function () {
 
-		// #SPACETIME add_object( id, 'box', px, py, pz, color ): replaces the code below
+		// #SPACETIME synced: the database creates it and the row brings it into the scene
+		if ( editor.multiplayer ) return editor.multiplayer.addObject( 'box' );
 
 		const geometry = new THREE.BoxGeometry( 1, 1, 1, 1, 1, 1 );
 		const mesh = new THREE.Mesh( geometry, new THREE.MeshStandardMaterial() );
@@ -125,7 +125,8 @@ function MenubarAdd( editor ) {
 	option.setTextContent( strings.getKey( 'menubar/add/mesh/cylinder' ) );
 	option.onClick( function () {
 
-		// #SPACETIME add_object( id, 'cylinder', px, py, pz, color ): replaces the code below
+		// #SPACETIME synced: the database creates it and the row brings it into the scene
+		if ( editor.multiplayer ) return editor.multiplayer.addObject( 'cylinder' );
 
 		const geometry = new THREE.CylinderGeometry( 1, 1, 1, 32, 1, false, 0, Math.PI * 2 );
 		const mesh = new THREE.Mesh( geometry, new THREE.MeshStandardMaterial() );
@@ -207,7 +208,8 @@ function MenubarAdd( editor ) {
 	option.setTextContent( strings.getKey( 'menubar/add/mesh/plane' ) );
 	option.onClick( function () {
 
-		// #SPACETIME add_object( id, 'plane', px, py, pz, color ): replaces the code below
+		// #SPACETIME synced: the database creates it and the row brings it into the scene
+		if ( editor.multiplayer ) return editor.multiplayer.addObject( 'plane' );
 
 		const geometry = new THREE.PlaneGeometry( 1, 1, 1, 1 );
 		const material = new THREE.MeshStandardMaterial();
@@ -242,7 +244,8 @@ function MenubarAdd( editor ) {
 	option.setTextContent( strings.getKey( 'menubar/add/mesh/sphere' ) );
 	option.onClick( function () {
 
-		// #SPACETIME add_object( id, 'sphere', px, py, pz, color ): replaces the code below
+		// #SPACETIME synced: the database creates it and the row brings it into the scene
+		if ( editor.multiplayer ) return editor.multiplayer.addObject( 'sphere' );
 
 		const geometry = new THREE.SphereGeometry( 1, 32, 16, 0, Math.PI * 2, 0, Math.PI );
 		const mesh = new THREE.Mesh( geometry, new THREE.MeshStandardMaterial() );
@@ -469,7 +472,8 @@ function MenubarAdd( editor ) {
 	option.setTextContent( strings.getKey( 'menubar/add/light/point' ) );
 	option.onClick( function () {
 
-		// #SPACETIME add_object( id, 'pointlight', px, py, pz, color ): replaces the code below
+		// #SPACETIME synced: the database creates it and the row brings it into the scene
+		if ( editor.multiplayer ) return editor.multiplayer.addObject( 'pointlight' );
 
 		const color = 0xffffff;
 		const intensity = 1;
@@ -566,6 +570,19 @@ function MenubarAdd( editor ) {
 
 	} );
 	cameraSubmenu.add( option );
+
+	// #SPACETIME hide every option the database can't sync
+	if ( editor.multiplayer ) {
+
+		const synced = [ 'menubar/add/mesh', 'menubar/add/mesh/box', 'menubar/add/mesh/cylinder', 'menubar/add/mesh/plane', 'menubar/add/mesh/sphere', 'menubar/add/light', 'menubar/add/light/point' ].map( ( key ) => strings.getKey( key ) );
+
+		for ( const row of options.dom.querySelectorAll( '.option' ) ) {
+
+			if ( synced.includes( row.firstChild.textContent ) === false ) row.style.display = 'none';
+
+		}
+
+	}
 
 	return container;
 

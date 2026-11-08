@@ -65,6 +65,9 @@ function serveThreeRuntimeFiles() {
 			// Example scenes for File > New (fetched from examples/*.app.json).
 			copy( path.join( clientDir, 'editor/examples' ), 'examples' );
 
+			// Toolbar icons (Toolbar.js sets images/translate.svg etc. as <img> src at runtime).
+			copy( path.join( clientDir, 'editor/images' ), 'images' );
+
 		},
 	};
 
