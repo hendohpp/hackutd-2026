@@ -15,6 +15,7 @@
 
 import * as THREE from 'three';
 import { DbConnection, tables } from './module_bindings';
+import { signInAvailable, completeSignIn, signedInToken, signIn, signOut, forgetSignIn } from './auth.js'; // (runs first: restores ?scene after a sign-in)
 import './multiplayer.css';
 
 // ---------------------------------------------------------------------------------------------
@@ -71,12 +72,15 @@ class Multiplayer {
 		this.lastViewerSent = 0;
 		this.nameDialog = null;
 		this.nameSkipped = false; // "Not now" on the name dialog: don't ask again this visit
+		this.signedIn = false; // connected with a SpacetimeAuth sign-in (auth.js) rather than as a guest
 
-		// Floating panel (top-left of the viewport): connection badge + who's here.
+		// Floating panel (top-left of the viewport): connection badge + who's here + sign in/out.
 		this.badge = createElement( 'div', 'coscene-badge', '<span class="dot"></span><span class="text">Connecting…</span>' );
 		this.people = createElement( 'div', 'coscene-people' );
+		this.account = createElement( 'div', 'coscene-account' );
+		this.account.hidden = true;
 		this.panel = createElement( 'div', 'coscene-panel' );
-		this.panel.append( this.badge, this.people );
+		this.panel.append( this.badge, this.people, this.account );
 		this.toastBox = createElement( 'div', 'coscene-toasts' );
 		document.body.append( this.panel, this.toastBox );
 
@@ -87,11 +91,38 @@ class Multiplayer {
 	// -------------------------------------------------------------------------------------------
 	// Connection
 
-	connect() {
-
-		const token = readToken();
+	async connect() {
 
 		this.setStatus( 'connecting' );
+
+		// Back from SpacetimeAuth? Finish signing in first, so we connect with the new sign-in.
+		try {
+
+			await completeSignIn();
+
+		} catch ( error ) {
+
+			console.warn( '[coscene] sign-in failed:', error );
+			this.pendingNotice = 'Sign-in didn\'t complete. You\'re continuing as a guest.'; // shown once connected
+
+		}
+
+		let signInToken;
+
+		try {
+
+			signInToken = await signedInToken();
+
+		} catch ( error ) {
+
+			console.warn( '[coscene] couldn\'t read the sign-in:', error );
+
+		}
+
+		// Signed in: connect with the account's token (same identity on every device). Guest: this tab's token.
+		this.signedIn = signInToken !== undefined;
+		const token = signInToken ?? readToken();
+		this.refreshAccount();
 
 		this.conn = DbConnection.builder()
 			.withUri( URI )
@@ -100,7 +131,8 @@ class Multiplayer {
 			.withAutomaticReconnect()
 			.onConnect( ( _conn, identity, newToken ) => {
 
-				writeToken( newToken );
+				// Guests keep the token SpacetimeDB issued them; a sign-in brings its own.
+				if ( this.signedIn === false ) writeToken( newToken );
 				this.identity = identity.toHexString();
 				this.connected = true;
 				this.setStatus( 'live' );
@@ -122,6 +154,13 @@ class Multiplayer {
 				if ( nextAttempt !== undefined ) {
 
 					this.setStatus( 'reconnecting' );
+
+				} else if ( this.signedIn ) {
+
+					// The sign-in was refused (e.g. it expired): continue as a guest.
+					this.signedIn = false;
+					this.toast( 'Your sign-in expired. You\'re continuing as a guest; sign in again from the panel.' );
+					forgetSignIn().finally( () => this.connect() );
 
 				} else if ( token !== undefined && this.triedWithoutToken === false ) {
 
@@ -189,6 +228,13 @@ class Multiplayer {
 	}
 
 	async onConnected() {
+
+		if ( this.pendingNotice ) {
+
+			this.toast( this.pendingNotice );
+			this.pendingNotice = null;
+
+		}
 
 		try {
 
@@ -967,7 +1013,8 @@ class Multiplayer {
 
 		if ( me.name && me.name !== 'Guest' ) {
 
-			if ( saved === undefined ) saveName( me.name );
+			// (an account's name isn't this browser's guest name)
+			if ( saved === undefined && this.signedIn === false ) saveName( me.name );
 			return;
 
 		}
@@ -1008,12 +1055,21 @@ class Multiplayer {
 			<h2 id="coscene-name-title"></h2>
 			<p></p>
 			<input id="coscene-name" name="name" maxlength="${MAX_NAME_CHARS}" autocomplete="nickname" placeholder="Your name" aria-labelledby="coscene-name-title">
+			<p class="sign-in" hidden>Have an account? <button type="button" class="link">Sign in</button> to use its name.</p>
 			<div class="actions"><button type="button" class="secondary"></button><button type="submit"></button></div>` );
 
 		form.querySelector( 'h2' ).textContent = renaming ? 'Change your name' : 'What should we call you?';
 		form.querySelector( 'p' ).textContent = 'Others see it on what you\'re editing and next to your camera.';
 		form.querySelector( '.secondary' ).textContent = renaming ? 'Cancel' : 'Not now';
 		form.querySelector( '[type="submit"]' ).textContent = renaming ? 'Save' : 'Join';
+
+		// Optional sign-in (SpacetimeAuth) instead of a guest name
+		if ( signInAvailable && renaming === false && this.signedIn === false ) {
+
+			form.querySelector( '.sign-in' ).hidden = false;
+			form.querySelector( '.sign-in .link' ).addEventListener( 'click', () => signIn() );
+
+		}
 
 		const input = form.querySelector( 'input' );
 		input.value = renaming ? current.name : ( readSavedName() || '' );
@@ -1043,6 +1099,32 @@ class Multiplayer {
 
 		input.focus();
 		input.select();
+
+	}
+
+	// The panel's last row: "Sign in to use your account" for guests, "Signed in · Sign out" otherwise.
+	// Hidden until a SpacetimeAuth client ID is set (auth.js).
+	refreshAccount() {
+
+		this.account.hidden = signInAvailable === false;
+		if ( this.account.hidden ) return;
+
+		const button = createElement( 'button', 'link' );
+		button.type = 'button';
+
+		if ( this.signedIn ) {
+
+			button.textContent = 'Sign out';
+			button.addEventListener( 'click', () => signOut() );
+			this.account.replaceChildren( document.createTextNode( 'Signed in · ' ), button );
+
+		} else {
+
+			button.textContent = 'Sign in';
+			button.addEventListener( 'click', () => signIn() );
+			this.account.replaceChildren( button, document.createTextNode( ' to use your account' ) );
+
+		}
 
 	}
 

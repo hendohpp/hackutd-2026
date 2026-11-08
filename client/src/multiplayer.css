@@ -91,6 +91,34 @@
 
 .coscene-people .person.me:hover .edit { color: var( --panel-fg ); }
 
+/* sign in / sign out row (only shown once a SpacetimeAuth client ID is configured) */
+.coscene-account {
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px solid var( --panel-border );
+	color: var( --panel-muted );
+	font-size: 11px;
+}
+
+.coscene-account[hidden] { display: none; }
+
+.coscene-account button.link,
+.coscene-dialog button.link {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-decoration: underline;
+	cursor: pointer;
+	pointer-events: auto; /* the panel itself lets clicks through to the viewport */
+}
+
+.coscene-account button.link { color: var( --panel-fg ); font-weight: bold; }
+.coscene-dialog button.link { color: var( --dialog-accent ); }
+.coscene-dialog .sign-in { font-size: 12px; }
+.coscene-dialog .sign-in[hidden] { display: none; }
+
 /* name dialog */
 .coscene-dialog-backdrop {
 	position: fixed;
