@@ -1892,7 +1892,8 @@ function assetKind( kind, editor ) {
 				// Own copies, so removing this object (disposeObject) doesn't break other copies.
 				child.geometry = child.geometry.clone();
 				child.material = Array.isArray( child.material ) ? child.material.map( ( m ) => m.clone() ) : child.material.clone();
-				child.userData.object = group;
+				// Not enumerable, so JSON (File > Save, exporters) skips it instead of looping part -> model -> part.
+				Object.defineProperty( child.userData, 'object', { value: group, configurable: true, writable: true } );
 
 			} );
 			group.add( copy );
