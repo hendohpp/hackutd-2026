@@ -9,9 +9,6 @@
 
 import { UserManager, WebStorageStateStore } from 'oidc-client-ts';
 
-// From the SpacetimeAuth dashboard (Maincloud > coscene-hackutd > SpacetimeAuth > Clients). Client IDs
-// are public, so it's fine to commit. Keep it in sync with SPACETIMEAUTH_CLIENT_ID in server/src/auth.rs.
-// While empty, the sign-in option is hidden. VITE_SPACETIMEAUTH_CLIENT_ID overrides it for testing.
 const SPACETIMEAUTH_CLIENT_ID = import.meta.env.VITE_SPACETIMEAUTH_CLIENT_ID || 'client_034tqgLZLkX9U3IhumuLUP';
 const AUTHORITY = 'https://auth.spacetimedb.com/oidc';
 
@@ -20,10 +17,10 @@ const AUTHORITY = 'https://auth.spacetimedb.com/oidc';
 const REDIRECT_URI = `${location.origin}/`;
 
 // sessionStorage: the ?scene=… you were on, restored after the sign-in round trip
-const RETURN_KEY = 'coscene/sign-in-return';
+const RETURN_KEY = 'collab3d/sign-in-return';
 
 // sessionStorage: a sign-in started in the editor failed on the landing page (see noteSignInFailed)
-const FAILED_KEY = 'coscene/sign-in-failed';
+const FAILED_KEY = 'collab3d/sign-in-failed';
 
 export const signInAvailable = SPACETIMEAUTH_CLIENT_ID !== '';
 
@@ -139,7 +136,7 @@ export async function signedInToken() {
 
 		} catch ( error ) {
 
-			console.warn( '[coscene] couldn\'t renew the sign-in:', error );
+			console.warn( '[collab3d] couldn\'t renew the sign-in:', error );
 			user = null;
 
 		}

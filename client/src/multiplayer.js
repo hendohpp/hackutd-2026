@@ -1,18 +1,3 @@
-// CoScene multiplayer: the only place the client talks to SpacetimeDB.
-//
-// The database is the single source of truth for every synced object:
-//   - Rows arrive through the subscription. applyRow() / removeRow() are the ONLY code that adds,
-//     updates or removes synced objects in editor.scene.
-//   - Local edits are sent as reducer calls. Transforms and colors are picked up from the editor's own
-//     signals (objectChanged / materialChanged), so the gizmo, the sidebar fields, Reset and Center all
-//     sync without changes to those files.
-//   - Selecting an object locks it (lock_object); deselecting unlocks it. Objects locked by someone else
-//     get an outline + name label in that user's color and can't be selected.
-//   - Everyone's camera is shared (viewer table): other people appear as small cameras in their color,
-//     with their name and a dashed line to what they're looking at.
-//
-// The editor calls into this file through editor.multiplayer. Search the editor for "#SPACETIME".
-
 import * as THREE from 'three';
 import { DbConnection, tables } from './module_bindings';
 import { signInAvailable, takeSignInFailed, signedInToken, renewedSignInToken, signIn, signOut, forgetSignIn } from './auth.js';
@@ -23,7 +8,7 @@ import './multiplayer.css';
 // Override with VITE_SPACETIME_URI / VITE_SPACETIME_DB (see client/.env.example).
 
 const URI = import.meta.env.VITE_SPACETIME_URI || ( import.meta.env.PROD ? 'wss://maincloud.spacetimedb.com' : 'ws://localhost:3000' );
-const DB_NAME = import.meta.env.VITE_SPACETIME_DB || ( import.meta.env.PROD ? 'coscene-hackutd' : 'coscene' );
+const DB_NAME = import.meta.env.VITE_SPACETIME_DB || ( import.meta.env.PROD ? 'collab3d-hackutd' : 'collab3d' );
 
 // Everyone on the same link edits the same scene: ?scene=N, default 1.
 const sceneParam = new URLSearchParams( location.search ).get( 'scene' );
@@ -39,7 +24,7 @@ const VIEWER_INTERVAL = 100; // ms between camera updates while your camera move
 const VIEWER_HIDE_DISTANCE = 0.75; // hide someone whose camera is right where yours is (everyone starts at the same spot)
 const GAZE_LENGTH = 4; // length of the gaze line when it doesn't hit anything
 const MAX_NAME_CHARS = 24; // same limit as the server's set_name
-const NAME_KEY = 'coscene/name'; // localStorage: the browser remembers your name, so new tabs reuse it
+const NAME_KEY = 'collab3d/name'; // localStorage: the browser remembers your name, so new tabs reuse it
 const EPSILON = 1e-4;
 
 // The kinds the database knows, built exactly like the editor's Add menu builds them.
@@ -76,17 +61,17 @@ class Multiplayer {
 
 		// Floating panel (top-left of the viewport): back to your servers + this server's name, connection
 		// badge, a notice (e.g. not a member), who's here, sign in/out.
-		this.server = createElement( 'div', 'coscene-server', '<a href="servers.html" title="Your servers">← Servers</a><span class="name"></span>' );
+		this.server = createElement( 'div', 'collab3d-server', '<a href="servers.html" title="Your servers">← Servers</a><span class="name"></span>' );
 		this.serverName = this.server.querySelector( '.name' );
-		this.badge = createElement( 'div', 'coscene-badge', '<span class="dot"></span><span class="text">Connecting…</span>' );
-		this.notice = createElement( 'div', 'coscene-notice' );
+		this.badge = createElement( 'div', 'collab3d-badge', '<span class="dot"></span><span class="text">Connecting…</span>' );
+		this.notice = createElement( 'div', 'collab3d-notice' );
 		this.notice.hidden = true;
-		this.people = createElement( 'div', 'coscene-people' );
-		this.account = createElement( 'div', 'coscene-account' );
+		this.people = createElement( 'div', 'collab3d-people' );
+		this.account = createElement( 'div', 'collab3d-account' );
 		this.account.hidden = true;
-		this.panel = createElement( 'div', 'coscene-panel' );
+		this.panel = createElement( 'div', 'collab3d-panel' );
 		this.panel.append( this.server, this.badge, this.notice, this.people, this.account );
-		this.toastBox = createElement( 'div', 'coscene-toasts' );
+		this.toastBox = createElement( 'div', 'collab3d-toasts' );
 		document.body.append( this.panel, this.toastBox );
 
 		this.listenToEditor();
@@ -111,7 +96,7 @@ class Multiplayer {
 
 		} catch ( error ) {
 
-			console.warn( '[coscene] couldn\'t read the sign-in:', error );
+			console.warn( '[collab3d] couldn\'t read the sign-in:', error );
 
 		}
 
@@ -139,13 +124,13 @@ class Multiplayer {
 
 				this.connected = false;
 				this.setStatus( nextAttempt !== undefined ? 'reconnecting' : 'offline' );
-				if ( error ) console.warn( '[coscene] disconnected:', error );
+				if ( error ) console.warn( '[collab3d] disconnected:', error );
 
 			} )
 			.onConnectError( ( _ctx, error, nextAttempt ) => {
 
 				this.connected = false;
-				console.error( '[coscene] connection failed:', error );
+				console.error( '[collab3d] connection failed:', error );
 
 				if ( nextAttempt !== undefined ) {
 
@@ -205,7 +190,7 @@ class Multiplayer {
 			.onApplied( () => this.syncAll() )
 			.onError( ( _ctx, error ) => {
 
-				console.error( '[coscene] subscription failed:', error );
+				console.error( '[collab3d] subscription failed:', error );
 				this.toast( 'Subscription failed, see the console.' );
 
 			} )
@@ -223,7 +208,7 @@ class Multiplayer {
 		// Cameras have their own subscription, so a server without the viewer table can't break the scene.
 		this.conn.subscriptionBuilder()
 			.onApplied( () => this.syncViewers() )
-			.onError( ( _ctx, error ) => console.warn( '[coscene] other people\'s cameras are unavailable:', error ) )
+			.onError( ( _ctx, error ) => console.warn( '[collab3d] other people\'s cameras are unavailable:', error ) )
 			.subscribe( [ tables.viewer.where( ( r ) => r.sceneId.eq( SCENE_ID ) ) ] );
 
 		if ( this.renewTimer === undefined ) this.renewTimer = setInterval( () => this.renewLocks(), LOCK_RENEW_INTERVAL );
@@ -276,7 +261,7 @@ class Multiplayer {
 		const row = this.conn?.db.scene.id.find( SCENE_ID );
 		const name = row ? row.name : '';
 		this.serverName.textContent = name;
-		document.title = name ? `${name} · CoScene` : 'CoScene';
+		document.title = name ? `${name} · collab3d` : 'collab3d';
 
 	}
 
@@ -1058,11 +1043,11 @@ class Multiplayer {
 		const current = this.identity !== null ? this.findUser( this.identity ) : undefined;
 		const renaming = current !== undefined && current.name !== 'Guest';
 
-		const backdrop = createElement( 'div', 'coscene-dialog-backdrop' );
-		const form = createElement( 'form', 'coscene-dialog', `
-			<h2 id="coscene-name-title"></h2>
+		const backdrop = createElement( 'div', 'collab3d-dialog-backdrop' );
+		const form = createElement( 'form', 'collab3d-dialog', `
+			<h2 id="collab3d-name-title"></h2>
 			<p></p>
-			<input id="coscene-name" name="name" maxlength="${MAX_NAME_CHARS}" autocomplete="nickname" placeholder="Your name" aria-labelledby="coscene-name-title">
+			<input id="collab3d-name" name="name" maxlength="${MAX_NAME_CHARS}" autocomplete="nickname" placeholder="Your name" aria-labelledby="collab3d-name-title">
 			<p class="sign-in" hidden>Have an account? <button type="button" class="link">Sign in</button> to use its name.</p>
 			<div class="actions"><button type="button" class="secondary"></button><button type="submit"></button></div>` );
 
@@ -1420,7 +1405,7 @@ class Multiplayer {
 
 	toast( message ) {
 
-		const toast = createElement( 'div', 'coscene-toast' );
+		const toast = createElement( 'div', 'collab3d-toast' );
 		toast.textContent = message;
 		this.toastBox.append( toast );
 		setTimeout( () => toast.classList.add( 'hide' ), 2600 );

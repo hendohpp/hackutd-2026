@@ -15,7 +15,7 @@ import {
 
 const MAX_SERVER_NAME = 40; // same limit as the server's create_scene
 const CODE_LENGTH = 6;
-const PENDING_JOIN_KEY = 'coscene/pending-join'; // sessionStorage: a ?join= code waiting for a name or sign-in
+const PENDING_JOIN_KEY = 'collab3d/pending-join'; // sessionStorage: a ?join= code waiting for a name or sign-in
 
 const $ = ( selector ) => document.querySelector( selector );
 const grid = $( '#server-grid' );
