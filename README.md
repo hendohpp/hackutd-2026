@@ -2,7 +2,7 @@
 
 A multiplayer version of the [three.js editor](https://threejs.org/editor/): everyone who opens the same URL edits one shared 3D scene in real time. SpacetimeDB is the entire backend; three.js only draws what's in the database.
 
-**Live:** https://hackutd-2026-nu.vercel.app/ (database `coscene-hackutd` on SpacetimeDB Maincloud)
+**Live:** https://hackutd-2026.vercel.app/ (database `coscene-hackutd` on SpacetimeDB Maincloud)
 
 ## How it works
 
