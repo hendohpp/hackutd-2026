@@ -1,11 +1,12 @@
 // AI TEAMMATE (all server AI code lives in this file)
 //
-// - ai_config: private table with the shared Gemini API key (clients can't read it).
-// - set_ai_key: stores the key. The first identity to set it is the only one that can change it.
+// - ai_config: private table with the shared API keys (clients can't read them): row 0 Gemini, row 1 Claude.
+// - set_ai_key / set_claude_key: store a key. The first identity to set it is the only one that can change it.
 // - ask_ai(scene_id, prompt, detailed): finds the spot the caller's camera is looking at and the
-//   objects already around it, asks Gemini what to add, change or remove there, checks the answer,
+//   objects already around it, asks the model what to add, change or remove there, checks the answer,
 //   and applies it to the existing `object` table in one transaction. Everyone sees the result
-//   through the normal subscription.
+//   through the normal subscription. The model is Claude when its key is set (Gemini's fast model
+//   steps in if Claude fails), otherwise Gemini.
 // - ai_event: public notices of what the AI did, so other people's editors can show them.
 // - undo_ai(scene_id): undoes the caller's last AI change (ai_undo remembers it).
 //
@@ -25,6 +26,12 @@ use crate::tables::{object, scene_member, viewer, Object};
 const GEMINI_URL: &str = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const FAST_MODEL: &str = "gemini-3.5-flash-lite"; // a few seconds
 const DETAILED_MODEL: &str = "gemini-3.6-flash"; // better builds, up to a minute; falls back to FAST_MODEL
+const CLAUDE_URL: &str = "https://api.anthropic.com/v1/messages";
+const CLAUDE_MODEL: &str = "claude-opus-5-5";
+const CLAUDE_EFFORT: &str = "low"; // how hard Claude thinks: "low" answers in ~10-25 s; "medium" thinks ~15-20 s longer first
+const CLAUDE_MAX_TOKENS: u32 = 16000; // thinking + the JSON answer
+const CLAUDE_TIMEOUT_SECS: u64 = 120;
+const CLAUDE_KEY_ROW: u32 = 1; // ai_config row of the Claude key (row 0 is Gemini's)
 const KINDS: [&str; 8] = ["box", "sphere", "cylinder", "cone", "capsule", "torus", "icosahedron", "plane"];
 const MAX_CREATE: usize = 200; // new objects per request, after repeats are expanded
 const MAX_ACTIONS: usize = 80; // actions in Gemini's answer (one action can repeat into many objects)
@@ -50,7 +57,7 @@ const DEFAULT_COLOR: &str = "#888888";
 #[spacetimedb::table(accessor = ai_config)]
 pub struct AiConfig {
     #[primary_key]
-    pub id: u32, // always 0: there is one row
+    pub id: u32, // 0: the Gemini key, CLAUDE_KEY_ROW: the Claude key
     pub api_key: String,
     pub owner: Identity, // who first set the key; only they can change it
 }
@@ -111,15 +118,26 @@ pub struct AiResult {
     pub note: String, // e.g. that the fast model stood in for the detailed one
 }
 
+/// The Gemini API key.
 #[spacetimedb::reducer]
 pub fn set_ai_key(ctx: &ReducerContext, api_key: String) -> Result<(), String> {
+    store_key(ctx, 0, api_key)
+}
+
+/// The Claude API key. Once it's set, ask_ai uses Claude, with Gemini as the backup.
+#[spacetimedb::reducer]
+pub fn set_claude_key(ctx: &ReducerContext, api_key: String) -> Result<(), String> {
+    store_key(ctx, CLAUDE_KEY_ROW, api_key)
+}
+
+fn store_key(ctx: &ReducerContext, id: u32, api_key: String) -> Result<(), String> {
     let api_key = api_key.trim().to_string();
     if api_key.is_empty() {
         return Err("the API key is empty".to_string());
     }
-    match ctx.db.ai_config().id().find(0) {
+    match ctx.db.ai_config().id().find(id) {
         Some(cfg) if cfg.owner != ctx.sender() => {
-            Err("only the identity that first set the AI key can change it".to_string())
+            Err("only the identity that first set this key can change it".to_string())
         }
         Some(mut cfg) => {
             cfg.api_key = api_key;
@@ -127,7 +145,61 @@ pub fn set_ai_key(ctx: &ReducerContext, api_key: String) -> Result<(), String> {
             Ok(())
         }
         None => {
-            ctx.db.ai_config().insert(AiConfig { id: 0, api_key, owner: ctx.sender() });
+            ctx.db.ai_config().insert(AiConfig { id, api_key, owner: ctx.sender() });
+            Ok(())
+        }
+    }
+}
+
+// Rate limits: each request to Claude costs real money, and anyone on the site can ask.
+const ASK_COOLDOWN_MICROS: i64 = 10_000_000; // one request per person every 10 seconds
+const MAX_ASKS_PER_HOUR: u32 = 120; // for everyone together
+
+/// Private: when each person last asked the AI (for the cooldown).
+#[spacetimedb::table(accessor = ai_last_ask)]
+pub struct AiLastAsk {
+    #[primary_key]
+    pub identity: Identity,
+    pub at: Timestamp,
+}
+
+/// Private: how many AI requests everyone made since `hour_start` (one row, id 0).
+#[spacetimedb::table(accessor = ai_hourly)]
+pub struct AiHourly {
+    #[primary_key]
+    pub id: u32,
+    pub hour_start: Timestamp,
+    pub count: u32,
+}
+
+fn check_rate(ctx: &ReducerContext, sender: Identity) -> Result<(), String> {
+    let now = ctx.timestamp;
+    match ctx.db.ai_last_ask().identity().find(sender) {
+        Some(last) if last.at + TimeDuration::from_micros(ASK_COOLDOWN_MICROS) > now => {
+            return Err("give the AI a few seconds between requests".to_string());
+        }
+        Some(_) => {
+            ctx.db.ai_last_ask().identity().update(AiLastAsk { identity: sender, at: now });
+        }
+        None => {
+            ctx.db.ai_last_ask().insert(AiLastAsk { identity: sender, at: now });
+        }
+    }
+    let hour = TimeDuration::from_micros(3_600_000_000);
+    match ctx.db.ai_hourly().id().find(0) {
+        Some(h) if h.hour_start + hour > now && h.count >= MAX_ASKS_PER_HOUR => {
+            Err("the AI has had a busy hour; try again in a few minutes".to_string())
+        }
+        Some(h) if h.hour_start + hour > now => {
+            ctx.db.ai_hourly().id().update(AiHourly { count: h.count + 1, ..h });
+            Ok(())
+        }
+        Some(_) => {
+            ctx.db.ai_hourly().id().update(AiHourly { id: 0, hour_start: now, count: 1 });
+            Ok(())
+        }
+        None => {
+            ctx.db.ai_hourly().insert(AiHourly { id: 0, hour_start: now, count: 1 });
             Ok(())
         }
     }
@@ -143,13 +215,17 @@ pub fn ask_ai(ctx: &mut ProcedureContext, scene_id: u64, prompt: String, detaile
         return Err(format!("keep the prompt under {MAX_PROMPT_CHARS} characters"));
     }
 
-    // 1. Look (short transaction): check the caller is in the scene, read the key, and find
-    //    where they're looking and what's already there.
+    // 1. Look (short transaction): check the caller is in the scene and within the rate limits,
+    //    read the key, and find where they're looking and what's already there.
     let sender = ctx.sender();
-    let look = ctx.try_with_tx(|tx| look_around(tx, sender, scene_id))?;
+    let look = ctx.try_with_tx(|tx| {
+        let look = look_around(tx, sender, scene_id)?;
+        check_rate(tx, sender)?; // (an error here rolls back this transaction, so nothing is counted)
+        Ok::<Look, String>(look)
+    })?;
 
-    // 2. Think: ask Gemini, outside any transaction (procedures can't make HTTP calls inside one).
-    let (text, note) = ask_gemini(ctx, &look.key, &instructions(&prompt, &look.nearby), detailed)?;
+    // 2. Think: ask the model, outside any transaction (procedures can't make HTTP calls inside one).
+    let (text, note) = ask_model(ctx, &look, &instructions(&prompt, &look.nearby), detailed)?;
     let plan = read_plan(&text, &look)?;
     spacetimedb::log::info!(
         "ask_ai: after checks {} create / {} update / {} delete; {} nearby objects shown, center {:?}",
@@ -227,9 +303,10 @@ fn undo_last(ctx: &ReducerContext, me: Identity, scene_id: u64) -> Result<AiResu
 // ---------------------------------------------------------------------------------------------
 // 1. Look
 
-/// What ask_ai saw before calling Gemini.
+/// What ask_ai saw before calling the model.
 struct Look {
-    key: String,
+    gemini_key: Option<String>,
+    claude_key: Option<String>,
     center: (f64, f64), // world x, z of the spot the caller is looking at
     nearby: Vec<Nearby>, // objects around that spot, closest first
 }
@@ -260,13 +337,11 @@ fn look_around(ctx: &ReducerContext, sender: Identity, scene_id: u64) -> Result<
     if !member {
         return Err("not a member of this scene".to_string());
     }
-    let key = ctx
-        .db
-        .ai_config()
-        .id()
-        .find(0)
-        .map(|cfg| cfg.api_key)
-        .ok_or_else(|| "the AI key is not set yet (call set_ai_key)".to_string())?;
+    let key = |id: u32| ctx.db.ai_config().id().find(id).map(|cfg| cfg.api_key);
+    let (gemini_key, claude_key) = (key(0), key(CLAUDE_KEY_ROW));
+    if gemini_key.is_none() && claude_key.is_none() {
+        return Err("the AI key is not set yet (call set_claude_key or set_ai_key)".to_string());
+    }
 
     // The viewer table holds each person's camera (see reducers/presence.rs).
     let center = ctx
@@ -293,7 +368,7 @@ fn look_around(ctx: &ReducerContext, sender: Identity, scene_id: u64) -> Result<
     nearby.sort_by(|a, b| a.0.total_cmp(&b.0));
     let nearby = nearby.into_iter().take(NEARBY_MAX).map(|(_, n)| n).collect();
 
-    Ok(Look { key, center, nearby })
+    Ok(Look { gemini_key, claude_key, center, nearby })
 }
 
 /// The spot on the ground the camera is looking at. Viewer rows hold the camera's world position
@@ -387,6 +462,26 @@ const EXAMPLE: &str = r##"{"plan":"Tabletop 1.2 x 0.8 m with its top at 0.75 m, 
 {"op":"create","kind":"cone","color":"#f5deb3","px":0.35,"py":1.12,"pz":0.15,"sx":0.3,"sy":0.22,"sz":0.3},
 {"op":"create","kind":"box","color":"#b03030","px":-0.3,"py":0.77,"pz":0.05,"sx":0.2,"sy":0.04,"sz":0.28,"ry":25}]}"##;
 
+/// Asks Claude when its key is set, with Gemini's fast model as the backup; otherwise Gemini.
+/// Returns the model's JSON text and a note for the user.
+fn ask_model(ctx: &mut ProcedureContext, look: &Look, instructions: &str, detailed: bool) -> Result<(String, String), String> {
+    let Some(claude_key) = &look.claude_key else {
+        return ask_gemini(ctx, look.gemini_key.as_deref().unwrap_or_default(), instructions, detailed);
+    };
+    match call_claude(ctx, claude_key, instructions) {
+        Ok(text) => Ok((text, String::new())),
+        Err(e) => {
+            spacetimedb::log::warn!("ask_ai: Claude failed: {e}");
+            let Some(gemini_key) = &look.gemini_key else {
+                return Err(e);
+            };
+            // The fast model only: Claude may already have used up much of the wait.
+            let text = call_model(ctx, gemini_key, FAST_MODEL, instructions, 60)?;
+            Ok((text, "Claude was unavailable, so Gemini's fast model built this.".to_string()))
+        }
+    }
+}
+
 /// Asks the fast model, or the detailed one with the fast one as a fallback.
 /// Returns Gemini's JSON text and a note for the user.
 fn ask_gemini(ctx: &mut ProcedureContext, key: &str, instructions: &str, detailed: bool) -> Result<(String, String), String> {
@@ -405,11 +500,12 @@ fn ask_gemini(ctx: &mut ProcedureContext, key: &str, instructions: &str, detaile
     Ok((call_model(ctx, key, FAST_MODEL, instructions, 60)?, String::new()))
 }
 
-fn call_model(ctx: &mut ProcedureContext, key: &str, model: &str, instructions: &str, timeout_secs: u64) -> Result<String, String> {
+/// The shape of the model's answer (both Gemini and Claude).
+fn plan_schema() -> Value {
     // Kept simple on purpose: Gemini rejects schemas with many constraints ("too many states").
     // The limits are in the instructions, and read_plan clamps every value and caps the count.
     let num = json!({ "type": "number" });
-    let schema = json!({
+    json!({
         "type": "object",
         "properties": {
             "plan": { "type": "string" },
@@ -443,12 +539,14 @@ fn call_model(ctx: &mut ProcedureContext, key: &str, model: &str, instructions: 
             },
         },
         "required": ["plan", "edit_existing", "standalone", "actions"],
-    });
+    })
+}
 
+fn call_model(ctx: &mut ProcedureContext, key: &str, model: &str, instructions: &str, timeout_secs: u64) -> Result<String, String> {
     let body = json!({
         "model": model,
         "input": instructions,
-        "response_format": { "type": "text", "mime_type": "application/json", "schema": schema },
+        "response_format": { "type": "text", "mime_type": "application/json", "schema": plan_schema() },
     });
 
     let request = Request::builder()
@@ -497,6 +595,69 @@ fn get_text(data: &Value) -> Option<String> {
     None
 }
 
+/// One request to Claude (Messages API) for the plan, as JSON text.
+fn call_claude(ctx: &mut ProcedureContext, key: &str, instructions: &str) -> Result<String, String> {
+    // No structured-output schema: Claude rejects plan_schema as "too complex". The instructions
+    // describe the JSON, and read_plan checks and clamps everything anyway.
+    let body = json!({
+        "model": CLAUDE_MODEL,
+        "max_tokens": CLAUDE_MAX_TOKENS,
+        "system": "Reply with only the JSON object the instructions describe: no other text, no code fences.",
+        "messages": [{ "role": "user", "content": instructions }],
+        "output_config": { "effort": CLAUDE_EFFORT },
+        // If a safety check declines the request, Anthropic retries it on a suitable other model.
+        "fallbacks": "default",
+    });
+
+    let request = Request::builder()
+        .uri(CLAUDE_URL)
+        .method("POST")
+        .header("x-api-key", key)
+        .header("anthropic-version", "2026-10-21")
+        .header("anthropic-beta", "server-side-fallback-2026-07-01")
+        .header("content-type", "application/json")
+        .extension(Timeout::from(TimeDuration::from(std::time::Duration::from_secs(CLAUDE_TIMEOUT_SECS))))
+        .body(body.to_string())
+        .map_err(|_| "could not build the Claude request".to_string())?;
+
+    spacetimedb::log::info!("ask_ai: asking {CLAUDE_MODEL} (effort {CLAUDE_EFFORT})");
+    let response = ctx
+        .http
+        .send(request)
+        .map_err(|e| format!("could not reach Claude: {e}"))?;
+    let (parts, body) = response.into_parts();
+    let raw = body.into_string_lossy();
+    if !parts.status.is_success() {
+        // e.g. 429: rate or spend limit; 529: Anthropic is overloaded
+        return Err(format!("Claude returned HTTP {}: {}", parts.status.as_u16(), short(&raw)));
+    }
+
+    let data: Value = serde_json::from_str(&raw).map_err(|_| "Claude's response was not JSON".to_string())?;
+    let usage = &data["usage"];
+    spacetimedb::log::info!(
+        "ask_ai: {} stop_reason={} input_tokens={} output_tokens={}",
+        data["model"], data["stop_reason"], usage["input_tokens"], usage["output_tokens"]
+    );
+    match data["stop_reason"].as_str() {
+        Some("refusal") => return Err("Claude declined this request".to_string()),
+        Some("max_tokens") => return Err("Claude's answer was too long and got cut off".to_string()),
+        _ => {}
+    }
+    // The JSON is in the text block (thinking blocks come before it). Keep just the object, in case
+    // Claude wraps it in a code fence or a sentence anyway.
+    let text = data["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|block| block["type"] == "text")
+        .and_then(|block| block["text"].as_str())
+        .ok_or_else(|| "could not find the JSON text in Claude's response".to_string())?;
+    match (text.find('{'), text.rfind('}')) {
+        (Some(start), Some(end)) if start < end => Ok(text[start..=end].to_string()),
+        _ => Err("Claude's answer had no JSON object".to_string()),
+    }
+}
+
 /// Gemini's answer after checking: new shapes are clamped, and only objects it was shown can be
 /// edited. Updates stay as Gemini's field changes ("patches"): they're applied to each object as
 /// it is when the change is made, because someone may have moved or recolored it meanwhile.
@@ -509,7 +670,7 @@ struct Plan {
 }
 
 fn read_plan(text: &str, look: &Look) -> Result<Plan, String> {
-    let parsed: Value = serde_json::from_str(text).map_err(|_| "Gemini's answer was not valid JSON".to_string())?;
+    let parsed: Value = serde_json::from_str(text).map_err(|_| "the AI's answer was not valid JSON".to_string())?;
     let mut plan = Plan {
         center: look.center,
         standalone: parsed["standalone"].as_bool() == Some(true),
@@ -525,7 +686,7 @@ fn read_plan(text: &str, look: &Look) -> Result<Plan, String> {
     let ops = |op: &str| actions.iter().filter(|a| a["op"] == op).count();
     let first_edit = actions.iter().find(|a| a["op"] != "create").map(|a| a.to_string()).unwrap_or_default();
     spacetimedb::log::info!(
-        "ask_ai: Gemini planned {:?}, edit_existing={may_edit}, {} create / {} update / {} delete {}",
+        "ask_ai: the model planned {:?}, edit_existing={may_edit}, {} create / {} update / {} delete {}",
         short(parsed["plan"].as_str().unwrap_or("")), ops("create"), ops("update"), ops("delete"), short(&first_edit)
     );
     let mut groups: Vec<(String, AiShape)> = Vec::new(); // shapes tagged "part_of" a group, for copy_group

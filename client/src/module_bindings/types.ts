@@ -30,6 +30,19 @@ export const AiEvent = __t.object("AiEvent", {
 });
 export type AiEvent = __Infer<typeof AiEvent>;
 
+export const AiHourly = __t.object("AiHourly", {
+  id: __t.u32(),
+  hourStart: __t.timestamp(),
+  count: __t.u32(),
+});
+export type AiHourly = __Infer<typeof AiHourly>;
+
+export const AiLastAsk = __t.object("AiLastAsk", {
+  identity: __t.identity(),
+  at: __t.timestamp(),
+});
+export type AiLastAsk = __Infer<typeof AiLastAsk>;
+
 export const AiResult = __t.object("AiResult", {
   added: __t.u32(),
   changed: __t.u32(),
