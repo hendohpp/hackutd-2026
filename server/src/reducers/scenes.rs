@@ -7,7 +7,7 @@ pub fn is_member(ctx: &ReducerContext, scene_id: u64) -> bool {
         .scene_member()
         .scene_id()
         .filter(scene_id)
-        .any(|m| m.identity == ctx.sender)
+        .any(|m| m.identity == ctx.sender())
 }
 
 #[spacetimedb::reducer]
@@ -15,12 +15,12 @@ pub fn create_scene(ctx: &ReducerContext, name: String) -> Result<(), String> {
     let scene = ctx.db.scene().insert(Scene {
         id: 0,
         name,
-        owner: ctx.sender,
+        owner: ctx.sender(),
     });
     ctx.db.scene_member().insert(SceneMember {
         id: 0,
         scene_id: scene.id,
-        identity: ctx.sender,
+        identity: ctx.sender(),
     });
     Ok(())
 }
@@ -36,7 +36,7 @@ pub fn join_scene(ctx: &ReducerContext, scene_id: u64) -> Result<(), String> {
     ctx.db.scene_member().insert(SceneMember {
         id: 0,
         scene_id,
-        identity: ctx.sender,
+        identity: ctx.sender(),
     });
     Ok(())
 }

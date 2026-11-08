@@ -10,12 +10,12 @@ pub fn update_cursor(ctx: &ReducerContext, scene_id: u64, cursor: Vec3) -> Resul
         return Err("not a member of this scene".to_string());
     }
     let row = Presence {
-        identity: ctx.sender,
+        identity: ctx.sender(),
         scene_id,
         cursor,
         updated_at: ctx.timestamp,
     };
-    if ctx.db.presence().identity().find(ctx.sender).is_some() {
+    if ctx.db.presence().identity().find(ctx.sender()).is_some() {
         ctx.db.presence().identity().update(row);
     } else {
         ctx.db.presence().insert(row);

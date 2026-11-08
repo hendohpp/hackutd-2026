@@ -44,18 +44,26 @@ function serveThreeRuntimeFiles() {
 
 		},
 
-		// Copy the same files into dist/ for `npm run build`.
+		// `npm run build`: copy everything the editor loads by URL instead of import,
+		// because Vite only bundles ES module imports.
 		closeBundle() {
 
 			const outDir = path.join( clientDir, 'dist' );
 			if ( ! fs.existsSync( outDir ) ) return;
 
-			fs.cpSync( path.join( threeDir, 'build' ), path.join( outDir, 'build' ), { recursive: true } );
-			for ( const lib of [ 'draco', 'basis' ] ) {
+			const copy = ( from, to ) => fs.cpSync( from, path.join( outDir, to ), { recursive: true } );
 
-				fs.cpSync( path.join( threeDir, 'examples/jsm/libs', lib ), path.join( outDir, 'examples/jsm/libs', lib ), { recursive: true } );
+			// three.js runtime files (see RUNTIME_DIRS above)
+			copy( path.join( threeDir, 'build' ), 'build' );
+			copy( path.join( threeDir, 'examples/jsm/libs/draco' ), 'examples/jsm/libs/draco' );
+			copy( path.join( threeDir, 'examples/jsm/libs/basis' ), 'examples/jsm/libs/basis' );
 
-			}
+			// The editor's classic <script src="js/libs/..."> tags (CodeMirror, tern, signals, ...),
+			// plus js/libs/app.js and js/libs/app/index.html, which File > Publish fetches as text.
+			copy( path.join( clientDir, 'editor/js/libs' ), 'js/libs' );
+
+			// Example scenes for File > New (fetched from examples/*.app.json).
+			copy( path.join( clientDir, 'editor/examples' ), 'examples' );
 
 		},
 	};

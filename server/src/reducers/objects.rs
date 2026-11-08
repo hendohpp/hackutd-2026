@@ -10,12 +10,24 @@ fn lock_duration() -> TimeDuration {
 
 /// Returns Ok if the sender holds an unexpired lock on the object.
 fn require_lock(ctx: &ReducerContext, obj: &Object) -> Result<(), String> {
-    let held = obj.locked_by == Some(ctx.sender)
+    let held = obj.locked_by == Some(ctx.sender())
         && obj.lock_expires_at.map_or(false, |exp| exp > ctx.timestamp);
     if held {
         Ok(())
     } else {
         Err("you do not hold an active lock on this object".to_string())
+    }
+}
+
+/// Accepts colors in the "#rrggbb" form three.js uses (Color.getHexString with a leading '#').
+fn validate_color(color: &str) -> Result<(), String> {
+    let valid = color.len() == 7
+        && color.starts_with('#')
+        && color[1..].chars().all(|c| c.is_ascii_hexdigit());
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("invalid color {color:?}, expected #rrggbb"))
     }
 }
 
@@ -39,6 +51,7 @@ pub fn create_object(
     ctx: &ReducerContext,
     scene_id: u64,
     kind: String,
+    color: String,
     position: Vec3,
     rotation: Vec3,
     scale: Vec3,
@@ -46,10 +59,12 @@ pub fn create_object(
     if !is_member(ctx, scene_id) {
         return Err("not a member of this scene".to_string());
     }
+    validate_color(&color)?;
     ctx.db.object().insert(Object {
         id: 0,
         scene_id,
         kind,
+        color,
         position,
         rotation,
         scale,
@@ -75,7 +90,7 @@ pub fn lock_object(ctx: &ReducerContext, object_id: u64) -> Result<(), String> {
 
     let now = ctx.timestamp;
     let locked_by_other = match (obj.locked_by, obj.lock_expires_at) {
-        (Some(who), Some(exp)) => who != ctx.sender && exp > now,
+        (Some(who), Some(exp)) => who != ctx.sender() && exp > now,
         _ => false,
     };
     if locked_by_other {
@@ -84,7 +99,7 @@ pub fn lock_object(ctx: &ReducerContext, object_id: u64) -> Result<(), String> {
 
     obj.lock_seq += 1;
     let expires_at = now + lock_duration();
-    obj.locked_by = Some(ctx.sender);
+    obj.locked_by = Some(ctx.sender());
     obj.lock_expires_at = Some(expires_at);
     let seq = obj.lock_seq;
     ctx.db.object().id().update(obj);
@@ -107,7 +122,7 @@ pub fn unlock_object(ctx: &ReducerContext, object_id: u64) -> Result<(), String>
         .find(object_id)
         .ok_or_else(|| "object not found".to_string())?;
 
-    if obj.locked_by != Some(ctx.sender) {
+    if obj.locked_by != Some(ctx.sender()) {
         return Err("you do not hold this lock".to_string());
     }
     obj.locked_by = None;
@@ -135,6 +150,22 @@ pub fn update_object_transform(
     obj.position = position;
     obj.rotation = rotation;
     obj.scale = scale;
+    ctx.db.object().id().update(obj);
+    Ok(())
+}
+
+#[spacetimedb::reducer]
+pub fn update_object_color(ctx: &ReducerContext, object_id: u64, color: String) -> Result<(), String> {
+    let mut obj = ctx
+        .db
+        .object()
+        .id()
+        .find(object_id)
+        .ok_or_else(|| "object not found".to_string())?;
+
+    require_lock(ctx, &obj)?;
+    validate_color(&color)?;
+    obj.color = color;
     ctx.db.object().id().update(obj);
     Ok(())
 }
