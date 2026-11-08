@@ -1,6 +1,24 @@
 use spacetimedb::{ReducerContext, Table};
 
+use crate::auth::require_auth;
 use crate::tables::{scene, scene_member, Scene, SceneMember};
+
+#[spacetimedb::reducer]
+pub fn create_scene(ctx: &ReducerContext, name: String) -> Result<(), String> {
+    require_auth(ctx)?;
+
+    let scene = ctx.db.scene().insert(Scene {
+        id: 0,
+        name,
+        owner: ctx.sender(),
+    });
+    ctx.db.scene_member().insert(SceneMember {
+        id: 0,
+        scene_id: scene.id,
+        identity: ctx.sender(),
+    });
+    Ok(())
+}
 
 pub fn is_member(ctx: &ReducerContext, scene_id: u64) -> bool {
     ctx.db
