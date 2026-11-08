@@ -11,7 +11,7 @@ const threeDir = path.join( clientDir, 'node_modules/three' );
 // files by URL at runtime (not through import), relative to the editor page:
 //   ../build/three.core.js, three.module.js, three.webgpu.js  (File > Publish, Script player)
 //   ../examples/jsm/libs/draco/, ../examples/jsm/libs/basis/   (Draco / KTX2 decoders)
-// The editor page is served at '/', so those URLs become /build/... and /examples/jsm/...
+// The editor page (editor.html) is at the web root, so those URLs become /build/... and /examples/jsm/...
 // This plugin serves them from node_modules/three, so we don't keep copies of build/ or examples/jsm.
 const RUNTIME_DIRS = [ 'build', 'examples/jsm' ];
 
@@ -79,7 +79,8 @@ function serveThreeRuntimeFiles() {
 }
 
 export default defineConfig( {
-	// The editor's index.html lives in client/editor, so that folder is the web root (/).
+	// The editor (editor.html) lives in client/editor, so that folder is the web root (/).
+	// The editor keeps its relative paths (images/, js/libs/, ../build/) because it stays in that folder.
 	root: path.join( clientDir, 'editor' ),
 	// Static extras the editor expects next to it (favicons, the Text menu's font).
 	publicDir: path.join( clientDir, 'public' ),
@@ -88,6 +89,12 @@ export default defineConfig( {
 	build: {
 		outDir: path.join( clientDir, 'dist' ),
 		emptyOutDir: true,
+		// Every page of the site. Vite only builds index.html unless the others are listed here.
+		rolldownOptions: {
+			input: {
+				editor: path.join( clientDir, 'editor/editor.html' ), // the 3D editor (?scene=N)
+			},
+		},
 	},
 	server: {
 		port: 5173,
