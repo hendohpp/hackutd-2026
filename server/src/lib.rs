@@ -1,4 +1,5 @@
 // MODULE (RE)ENTRY
+mod auth; // SpacetimeAuth sign-in checks
 mod lifecycle;
 mod math;
 mod reducers;

@@ -1,54 +1,67 @@
 use spacetimedb::rand::Rng;
 use spacetimedb::{ReducerContext, Table};
 
+use crate::auth::{account_name, signed_in};
 use crate::reducers::objects::release_user_locks;
-use crate::tables::{presence, user, viewer, User};
+use crate::tables::{presence, scene, user, viewer, Scene, User};
 
+/// Colors for people: saturated enough to stand out on the grey viewport, dark enough for the
+/// white text on lock and camera labels.
 const COLORS: [&str; 10] = [
     "#e53935", "#d81b60", "#8e24aa", "#5e35b1", "#3949ab",
     "#1e88e5", "#00897b", "#43a047", "#f4511e", "#6d4c41",
 ];
 
+/// The placeholder color users had before colors were assigned.
 const OLD_PLACEHOLDER_COLOR: &str = "#888888";
+
+/// A new database starts with the shared scene 1, so guests can join it: creating scenes needs a
+/// sign-in. (Runs only when a database is first created, not on later publishes.)
+#[spacetimedb::reducer(init)]
+pub fn init(ctx: &ReducerContext) {
+    ctx.db.scene().insert(Scene {
+        id: 0,
+        name: "Main".to_string(),
+        owner: ctx.sender(),
+    });
+}
 
 #[spacetimedb::reducer(client_connected)]
 pub fn client_connected(ctx: &ReducerContext) {
-    let auth_ctx = ctx.sender_auth();
-    
-    // Extract the name or subject from the JWT if available
-    let name = match auth_ctx.jwt() {
-        Some(jwt) => {
-            // You can trim the subject string for a clean default display name
-            let sub = jwt.subject();
-            let short_sub = &sub[..6.min(sub.len())];
-            format!("User_{short_sub}")
-        }
-        None => "Guest".to_string(),
-    };
+    // Signed in with SpacetimeAuth: the account's name. Guests stay "Guest" until they pick a
+    // name in the client's prompt.
+    let account = signed_in(ctx).and_then(account_name);
 
     match ctx.db.user().identity().find(ctx.sender()) {
         None => {
             let color = pick_color(ctx);
             ctx.db.user().insert(User {
                 identity: ctx.sender(),
-                name,
+                name: account.unwrap_or_else(|| "Guest".to_string()),
                 color,
             });
         }
-        Some(user) if user.color == OLD_PLACEHOLDER_COLOR => {
-            let color = pick_color(ctx);
-            ctx.db.user().identity().update(User { color, ..user });
-        }
         Some(mut user) => {
-            // If they reconnect with an authenticated token and were previously a Guest, upgrade them
-            if auth_ctx.jwt().is_some() && user.name == "Guest" {
-                user.name = name;
+            let mut changed = false;
+            if user.color == OLD_PLACEHOLDER_COLOR {
+                user.color = pick_color(ctx);
+                changed = true;
+            }
+            // Signed in but never picked a name: use the account's name.
+            if user.name == "Guest" {
+                if let Some(name) = account {
+                    user.name = name;
+                    changed = true;
+                }
+            }
+            if changed {
                 ctx.db.user().identity().update(user);
             }
         }
     }
 }
 
+/// A random palette color, preferring ones nobody currently in a scene is using.
 fn pick_color(ctx: &ReducerContext) -> String {
     let in_use: Vec<String> = ctx
         .db
