@@ -11,7 +11,7 @@ import { UserManager, WebStorageStateStore } from 'oidc-client-ts';
 // From the SpacetimeAuth dashboard (Maincloud > coscene-hackutd > SpacetimeAuth > Clients). Client IDs
 // are public, so it's fine to commit. Keep it in sync with SPACETIMEAUTH_CLIENT_ID in server/src/auth.rs.
 // While empty, the sign-in option is hidden. VITE_SPACETIMEAUTH_CLIENT_ID overrides it for testing.
-const SPACETIMEAUTH_CLIENT_ID = import.meta.env.VITE_SPACETIMEAUTH_CLIENT_ID || '';
+const SPACETIMEAUTH_CLIENT_ID = import.meta.env.VITE_SPACETIMEAUTH_CLIENT_ID || 'client_034tqgLZLkX9U3IhumuLUP';
 const AUTHORITY = 'https://auth.spacetimedb.com/oidc';
 
 // SpacetimeAuth sends you back to the page itself. Register these exact URLs on the client, as both

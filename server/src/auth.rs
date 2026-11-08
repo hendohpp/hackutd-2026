@@ -8,7 +8,7 @@ pub const SPACETIMEAUTH_ISSUER: &str = "https://auth.spacetimedb.com/oidc";
 /// This app's OAuth client, from the SpacetimeAuth dashboard (Maincloud > coscene-hackutd >
 /// SpacetimeAuth > Clients). Client IDs are public, so it's fine to commit. Keep it in sync with
 /// SPACETIMEAUTH_CLIENT_ID in client/src/auth.js. While empty, nobody counts as signed in.
-pub const SPACETIMEAUTH_CLIENT_ID: &str = "";
+pub const SPACETIMEAUTH_CLIENT_ID: &str = "client_034tqgLZLkX9U3IhumuLUP";
 
 /// The sender's sign-in claims if they signed in to this app with SpacetimeAuth, else None.
 ///
