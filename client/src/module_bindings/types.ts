@@ -10,6 +10,15 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const AiBuild = __t.object("AiBuild", {
+  id: __t.u64(),
+  sceneId: __t.u64(),
+  who: __t.identity(),
+  prompt: __t.string(),
+  objectIds: __t.array(__t.u64()),
+});
+export type AiBuild = __Infer<typeof AiBuild>;
+
 export const AiConfig = __t.object("AiConfig", {
   id: __t.u32(),
   apiKey: __t.string(),
@@ -68,6 +77,14 @@ export const AiUndo = __t.object("AiUndo", {
 });
 export type AiUndo = __Infer<typeof AiUndo>;
 
+export const AiUndoMotion = __t.object("AiUndoMotion", {
+  identity: __t.identity(),
+  get before() {
+    return __t.array(MotionBefore);
+  },
+});
+export type AiUndoMotion = __Infer<typeof AiUndoMotion>;
+
 export const Animation = __t.object("Animation", {
   objectId: __t.u64(),
   sceneId: __t.u64(),
@@ -95,6 +112,14 @@ export const LockExpiry = __t.object("LockExpiry", {
   lockSeq: __t.u64(),
 });
 export type LockExpiry = __Infer<typeof LockExpiry>;
+
+export const MotionBefore = __t.object("MotionBefore", {
+  objectId: __t.u64(),
+  get anim() {
+    return __t.option(Animation);
+  },
+});
+export type MotionBefore = __Infer<typeof MotionBefore>;
 
 export const MyServer = __t.object("MyServer", {
   sceneId: __t.u64(),

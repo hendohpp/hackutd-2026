@@ -9,11 +9,17 @@
 //   steps in if Claude fails), otherwise Gemini.
 // - ai_event: public notices of what the AI did, so other people's editors can show them.
 // - undo_ai(scene_id): undoes the caller's last AI change (ai_undo remembers it).
+// - ai_build: which objects each AI request made, so "delete the castle" can remove a whole build.
+//
+// Editing: the model sees the objects around the spot (and the ones the caller has selected, which
+// "this" and "it" mean), and can update them (move, resize, recolor, reshape into another kind or a
+// model), delete them one by one, many at once, or a whole build, and animate them.
 //
 // With Gemini we talk in meters relative to the spot the caller is looking at, sizes as bounding
 // boxes and rotations in degrees. to_row / from_row convert that to an object row's position,
 // rotation and scale, which depend on how the client builds each shape (multiplayer.js KINDS).
 
+use std::collections::{HashMap, HashSet};
 use std::f64::consts::FRAC_PI_2;
 
 use serde_json::{json, Value};
@@ -21,8 +27,8 @@ use spacetimedb::http::{Request, Timeout};
 use spacetimedb::{Identity, ProcedureContext, ReducerContext, SpacetimeType, Table, TimeDuration, Timestamp};
 
 use crate::math::Vec3;
-use crate::animation::animation;
-use crate::tables::{object, scene_member, viewer, Object};
+use crate::animation::{animation, Animation};
+use crate::tables::{object, scene_member, user, viewer, Object};
 
 const GEMINI_URL: &str = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const FAST_MODEL: &str = "gemini-3.5-flash-lite"; // a few seconds
@@ -35,9 +41,11 @@ const CLAUDE_TIMEOUT_SECS: u64 = 120;
 const CLAUDE_KEY_ROW: u32 = 1; // ai_config row of the Claude key (row 0 is Gemini's)
 const KINDS: [&str; 8] = ["box", "sphere", "cylinder", "cone", "capsule", "torus", "icosahedron", "plane"];
 const MAX_CREATE: usize = 500; // new objects per request, after repeats are expanded
-const MAX_ACTIONS: usize = 80; // actions in Gemini's answer (one action can repeat into many objects)
+const MAX_ACTIONS: usize = 300; // actions in the model's answer (one action can repeat into many objects)
 const MAX_COPIES: i64 = 60; // "times" and "times2" limits for one repeat
-const MAX_DELETES: usize = 15; // limits the damage if Gemini misreads a request in a shared scene
+const MAX_DELETES: usize = 500; // per request: a whole build can go at once (undo_ai brings it all back)
+const MAX_SELECTED: usize = 500; // selected objects shown to the model, on top of NEARBY_MAX nearby ones
+const BUILDS_KEPT: usize = 100; // ai_build rows kept per scene
 const MAX_POS: f64 = 100.0; // x and z: meters from the spot the caller is looking at (a 200 x 200 m build)
 const MIN_Y: f64 = -1.0;
 const MAX_Y: f64 = 150.0;
@@ -103,10 +111,42 @@ pub struct ObjectState {
     pub scale: Vec3,
 }
 
+/// One object's change. A reshape (a new kind) replaces the object, so `after` then has a new id.
 #[derive(SpacetimeType, Clone)]
 pub struct ObjectChange {
     pub before: ObjectState,
     pub after: ObjectState,
+}
+
+/// Private: the objects one AI request made, so the model can find a whole build again ("delete the
+/// castle") even when it has more parts than the model is shown one by one. Ids of objects deleted
+/// since are skipped when it's used; objects that were replaced (a reshape, or undo) keep their place.
+#[spacetimedb::table(accessor = ai_build)]
+pub struct AiBuild {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub scene_id: u64,
+    pub who: Identity,
+    pub prompt: String,
+    pub object_ids: Vec<u64>,
+}
+
+/// Private: how the objects in each person's last AI change were moving before it (ai_undo's other
+/// half), so undo_ai can put their animations back: objects the AI animated or stopped, and deleted
+/// objects that were moving.
+#[spacetimedb::table(accessor = ai_undo_motion)]
+pub struct AiUndoMotion {
+    #[primary_key]
+    pub identity: Identity,
+    pub before: Vec<MotionBefore>,
+}
+
+#[derive(SpacetimeType)]
+pub struct MotionBefore {
+    pub object_id: u64,
+    pub anim: Option<Animation>, // None: it wasn't moving
 }
 
 /// What ask_ai and undo_ai report back to the caller.
@@ -226,11 +266,13 @@ pub fn ask_ai(ctx: &mut ProcedureContext, scene_id: u64, prompt: String, detaile
     })?;
 
     // 2. Think: ask the model, outside any transaction (procedures can't make HTTP calls inside one).
-    let (text, note) = ask_model(ctx, &look, &instructions(&prompt, &look.nearby), detailed)?;
-    let plan = read_plan(&text, &look)?;
+    let (text, note) = ask_model(ctx, &look, &instructions(&prompt, &look), detailed)
+        .inspect_err(|e| spacetimedb::log::warn!("ask_ai {prompt:?}: {e}"))?;
+    let plan = read_plan(&text, &look).inspect_err(|e| spacetimedb::log::warn!("ask_ai {prompt:?}: {e}: {}", short(&text)))?;
     spacetimedb::log::info!(
-        "ask_ai: after checks {} create / {} update / {} delete; {} nearby objects shown, center {:?}",
-        plan.creates.len(), plan.updates.len(), plan.deletes.len(), look.nearby.len(), look.center
+        "ask_ai: after checks {} create / {} update / {} delete / {} whole builds deleted; {} objects shown ({} selected), center {:?}",
+        plan.creates.len(), plan.updates.len(), plan.deletes.len(), plan.delete_builds.len(),
+        look.nearby.len(), look.nearby.iter().filter(|n| n.selected).count(), look.center
     );
 
     // 3. Act (one transaction): find room for a standalone build, apply the changes, remember
@@ -264,6 +306,7 @@ fn undo_last(ctx: &ReducerContext, me: Identity, scene_id: u64) -> Result<AiResu
         .ok_or_else(|| "nothing to undo".to_string())?;
 
     let mut r = AiResult { added: 0, changed: 0, removed: 0, skipped: 0, note: String::new() };
+    let mut replaced = Vec::new(); // (old id, new id): objects brought back as new rows stay in their build
     for s in &undo.created {
         // remove what the AI added, unless someone changed it since
         match editable(ctx, s.id, scene_id, me, &mut r.skipped) {
@@ -277,6 +320,22 @@ fn undo_last(ctx: &ReducerContext, me: Identity, scene_id: u64) -> Result<AiResu
         }
     }
     for c in &undo.changed {
+        if c.before.id != c.after.id {
+            // a reshape replaced the object: swap the old one back in, unless someone changed the new one since
+            match editable(ctx, c.after.id, scene_id, me, &mut r.skipped) {
+                Some(obj) if state_of(&obj) == c.after => {
+                    let b = &c.before;
+                    let back = ctx.db.object().insert(new_object(scene_id, b.kind.clone(), b.color.clone(), b.position, b.rotation, b.scale));
+                    move_animation(ctx, obj.id, back.id);
+                    ctx.db.object().id().delete(obj.id);
+                    replaced.push((obj.id, back.id));
+                    r.changed += 1;
+                }
+                Some(_) => r.skipped += 1,
+                None => {}
+            }
+            continue;
+        }
         // put back what it changed, unless someone changed it again since
         match editable(ctx, c.after.id, scene_id, me, &mut r.skipped) {
             Some(mut obj) if state_of(&obj) == c.after => {
@@ -294,8 +353,28 @@ fn undo_last(ctx: &ReducerContext, me: Identity, scene_id: u64) -> Result<AiResu
     }
     for s in &undo.removed {
         // bring back what it deleted (as new objects)
-        ctx.db.object().insert(new_object(scene_id, s.kind.clone(), s.color.clone(), s.position, s.rotation, s.scale));
+        let back = ctx.db.object().insert(new_object(scene_id, s.kind.clone(), s.color.clone(), s.position, s.rotation, s.scale));
+        replaced.push((s.id, back.id));
         r.added += 1;
+    }
+    remap_builds(ctx, scene_id, &replaced);
+    // how things were moving before: objects it animated or stopped, and the ones it deleted (now back)
+    if let Some(motion) = ctx.db.ai_undo_motion().identity().find(me) {
+        for b in motion.before {
+            let id = replaced.iter().find(|(old, _)| *old == b.object_id).map_or(b.object_id, |(_, new)| *new);
+            if editable(ctx, id, scene_id, me, &mut r.skipped).is_none() {
+                continue; // gone, or someone else is editing it
+            }
+            match b.anim {
+                Some(anim) => crate::animation::put(ctx, Animation { object_id: id, ..anim }),
+                None => crate::animation::forget(ctx, id),
+            }
+            // (deleted ones brought back count as added, and turned cars as changed, already)
+            if !undo.removed.iter().any(|s| s.id == b.object_id) && !undo.changed.iter().any(|c| c.after.id == b.object_id) {
+                r.changed += 1;
+            }
+        }
+        ctx.db.ai_undo_motion().identity().delete(me);
     }
     ctx.db.ai_undo().identity().delete(me);
     log_event(ctx, me, scene_id, &undo.prompt, &r, true);
@@ -310,7 +389,8 @@ struct Look {
     gemini_key: Option<String>,
     claude_key: Option<String>,
     center: (f64, f64), // world x, z of the spot the caller is looking at
-    nearby: Vec<Nearby>, // objects around that spot, closest first
+    nearby: Vec<Nearby>, // the caller's selected objects, then the objects around that spot, closest first
+    builds: Vec<BuildInfo>, // the AI builds those objects belong to
 }
 
 /// An existing object, as Gemini sees it.
@@ -318,6 +398,16 @@ struct Nearby {
     id: u64,
     shape: AiShape,
     anim: Option<Value>, // how it moves, if it does (animation.rs)
+    selected: bool,      // the caller has it selected in the editor (holds its lock)
+    build: Option<u64>,  // the ai_build that made it
+}
+
+/// An AI build, as the model sees it: "build 7: "a castle" by Sam, 312 objects".
+struct BuildInfo {
+    id: u64,
+    prompt: String,
+    by: String,
+    objects: usize, // how many of its objects are still in the scene
 }
 
 /// A shape in Gemini's terms: position relative to the spot (meters), bounding-box size, degrees.
@@ -357,23 +447,54 @@ fn look_around(ctx: &ReducerContext, sender: Identity, scene_id: u64) -> Result<
         .map(|v| looking_at(v.position, v.rotation))
         .unwrap_or((0.0, 0.0));
 
-    let mut nearby: Vec<(f64, Nearby)> = ctx
-        .db
-        .object()
-        .scene_id()
-        .filter(scene_id)
-        .filter(|o| known_kind(&o.kind))
-        .map(|o| {
-            let (dx, dz) = (o.position.x as f64 - center.0, o.position.z as f64 - center.1);
-            let anim = ctx.db.animation().object_id().find(o.id).map(|a| crate::animation::describe(&a, o.position, center));
-            ((dx * dx + dz * dz).sqrt(), Nearby { id: o.id, shape: from_row(&o, center), anim })
-        })
-        .filter(|(distance, _)| *distance <= NEARBY_RADIUS)
+    // The objects the caller has selected (the editor locks what you select), wherever they are, and
+    // the ones near the spot.
+    let now = ctx.timestamp;
+    let mut selected: Vec<(f64, Nearby)> = Vec::new();
+    let mut around: Vec<(f64, Nearby)> = Vec::new();
+    for o in ctx.db.object().scene_id().filter(scene_id).filter(|o| known_kind(&o.kind)) {
+        let (dx, dz) = (o.position.x as f64 - center.0, o.position.z as f64 - center.1);
+        let distance = (dx * dx + dz * dz).sqrt();
+        let is_selected = o.locked_by == Some(sender) && o.lock_expires_at.is_some_and(|t| t > now);
+        if !is_selected && distance > NEARBY_RADIUS {
+            continue;
+        }
+        let anim = ctx.db.animation().object_id().find(o.id).map(|a| crate::animation::describe(&a, o.position, center));
+        let n = Nearby { id: o.id, shape: from_row(&o, center), anim, selected: is_selected, build: None };
+        if is_selected { selected.push((distance, n)) } else { around.push((distance, n)) }
+    }
+    selected.sort_by(|a, b| a.0.total_cmp(&b.0));
+    around.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut nearby: Vec<Nearby> = selected
+        .into_iter()
+        .take(MAX_SELECTED)
+        .chain(around.into_iter().take(NEARBY_MAX))
+        .map(|(_, n)| n)
         .collect();
-    nearby.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let nearby = nearby.into_iter().take(NEARBY_MAX).map(|(_, n)| n).collect();
 
-    Ok(Look { gemini_key, claude_key, center, nearby })
+    // Which AI build made each of them, and those builds (with how much of each is left).
+    let scene_builds: Vec<AiBuild> = ctx.db.ai_build().scene_id().filter(scene_id).collect();
+    let build_of: HashMap<u64, u64> = scene_builds.iter().flat_map(|b| b.object_ids.iter().map(move |id| (*id, b.id))).collect();
+    for n in &mut nearby {
+        n.build = build_of.get(&n.id).copied();
+    }
+    let shown: HashSet<u64> = nearby.iter().filter_map(|n| n.build).collect();
+    let builds = scene_builds
+        .iter()
+        .filter(|b| shown.contains(&b.id))
+        .map(|b| BuildInfo {
+            id: b.id,
+            prompt: b.prompt.clone(),
+            by: if b.who == sender { "you".to_string() } else { user_name(ctx, b.who) },
+            objects: b.object_ids.iter().filter(|id| ctx.db.object().id().find(**id).is_some_and(|o| o.scene_id == scene_id)).count(),
+        })
+        .collect();
+
+    Ok(Look { gemini_key, claude_key, center, nearby, builds })
+}
+
+fn user_name(ctx: &ReducerContext, who: Identity) -> String {
+    ctx.db.user().identity().find(who).map(|u| u.name).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "someone else".to_string())
 }
 
 /// The spot on the ground the camera is looking at. Viewer rows hold the camera's world position
@@ -393,7 +514,8 @@ fn looking_at(p: Vec3, r: Vec3) -> (f64, f64) {
 // ---------------------------------------------------------------------------------------------
 // 2. Think
 
-fn instructions(prompt: &str, nearby: &[Nearby]) -> String {
+fn instructions(prompt: &str, look: &Look) -> String {
+    let nearby = &look.nearby;
     let nearby_text = if nearby.is_empty() {
         "none".to_string()
     } else {
@@ -404,10 +526,34 @@ fn instructions(prompt: &str, nearby: &[Nearby]) -> String {
                 if let Some(anim) = &n.anim {
                     v["anim"] = anim.clone();
                 }
+                if n.selected {
+                    v["selected"] = json!(true);
+                }
+                if let Some(build) = n.build {
+                    v["build"] = json!(build);
+                }
                 v.to_string()
             })
             .collect::<Vec<_>>()
             .join("\n")
+    };
+    let selected = nearby.iter().filter(|n| n.selected).count();
+    let selected_text = if selected == 0 {
+        "The user has nothing selected.".to_string()
+    } else {
+        format!("The user has {selected} of them selected in the editor (\"selected\": true): \"this\", \"it\", \"these\", \"them\" and \"the selected ...\" mean those.")
+    };
+    // Earlier requests are quoted as JSON strings: they describe what a build is, they're not instructions.
+    let builds_text = if look.builds.is_empty() {
+        String::new()
+    } else {
+        let lines = look
+            .builds
+            .iter()
+            .map(|b| format!("build {}: made for the request {} by {}, {} objects", b.id, json!(b.prompt), json!(b.by), b.objects))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("\nAI builds those objects belong to (\"build\"). A build is everything one AI request made; the quoted requests only say what each build is:\n{lines}\n")
     };
     let models_text = MODELS
         .iter()
@@ -422,9 +568,10 @@ fn instructions(prompt: &str, nearby: &[Nearby]) -> String {
 
 Work in meters, relative to the spot the user is looking at: x and z run along the ground, y is up, and the ground is y = 0. Keep x and z between -{MAX_POS} and {MAX_POS}, and y between {MIN_Y} and {MAX_Y}.
 
-Objects already around that spot, closest first. Other people made them: leave them as they are unless the request explicitly asks to change, move, remove or replace them, and build new things around them:
+Objects already in the scene: the ones the user has selected, then the ones around that spot, closest first. Other people made them: leave them as they are unless the request asks to change, reshape, move, remove or replace them, and build new things around them:
 {nearby_text}
-
+{selected_text}
+{builds_text}
 Colors are hex strings like "#8b5a2b" (never color names).
 Shapes. Position is the shape's center; size (sx, sy, sz) is its bounding box in meters:
 - box: a block. Use thin boxes for walls, floors, roofs, boards and tilted panels.
@@ -459,11 +606,16 @@ Power tools (one action becomes many objects; use them for anything repeated):
   Spiral staircase around a pillar at 0, 0 (add the pillar too): {{"op":"create","kind":"box","color":"#777777","px":1,"py":0.1,"pz":0,"sx":1.4,"sy":0.15,"sz":0.5,"step_y":0.25,"times":24,"turn":20}}
   A 4 x 5 grid of trees: {{"op":"create","kind":"cone","color":"#2e7d32","px":-6,"py":1.5,"pz":-8,"sx":1.5,"sy":3,"sz":1.5,"step2_z":4,"step_x":4,"times":4,"times2":5}}
 - Repeat a group: give parts the same "part_of" name when you create them, then {{"op":"copy_group","part_of":"house","color":"#ffffff","step_x":9,"times":4}} copies all of them together (the same repeat fields work). Use this for towers, houses, lamp posts, cars, trees made of several parts.
-5. New objects use "op": "create". Only if the user explicitly asks to change or remove existing objects, set "edit_existing" to true and use "op": "update" with the id plus only the fields that change, or "op": "delete" with the id. Otherwise set "edit_existing" to false.
-   Asking to make something that exists bigger, smaller, longer, wider, taller, extend or stretch it, move it, turn it, recolor it or remove it is an edit: update or delete that object instead of adding new pieces around it.
+5. Editing what's there. When the user asks to change existing objects (make them bigger, smaller, longer, wider, taller, extend or stretch them, move, turn, recolor or reshape them, turn them into something else) or to remove, delete, clear or replace them, set "edit_existing" to true and edit those objects instead of adding new pieces around them. Otherwise set "edit_existing" to false and only create.
+   - "op": "update" with the "id" plus only the fields that change; the rest keep their current values. Changing "sy" without "py" keeps the object's bottom where it is, so it grows or shrinks upward.
+   - Reshape: an update with a new "kind" turns the object into that shape (a box into a sphere, a cylinder into a cone), or with "kind": "model" and "model" into that model (a box into a tree). It keeps its place, rotation, color and size unless you give new ones; a model gets its listed size.
+   - "op": "delete" with the "id" removes it.
+   - Many at once: "ids": [...] instead of "id" applies the same update or delete to each of them (don't move objects this way: they would all land on one spot).
+   - "op": "delete_build" with "build": a build's number deletes everything that build made, even parts you can't see. Use it to remove a whole build; to remove only some parts of a build, delete those by id.
    Every action includes a color; when an update or delete doesn't change the color, repeat the object's current one.
-   Recolor: {{"op":"update","id":7,"color":"#d62828"}}. Make taller: {{"op":"update","id":12,"color":"#8b4513","sy":1.5,"py":0.75}}. Remove: {{"op":"delete","id":9,"color":"#ffffff"}}.
+   Recolor: {{"op":"update","id":7,"color":"#d62828"}}. Make taller: {{"op":"update","id":12,"color":"#8b4513","sy":1.5}}. Into a sphere: {{"op":"update","id":5,"color":"#3366cc","kind":"sphere"}}. Into a tree: {{"op":"update","id":8,"color":"#2e7d32","kind":"model","model":"tree_oak"}}. Remove: {{"op":"delete","id":9,"color":"#ffffff"}}. Remove several: {{"op":"delete","ids":[10,11,12],"color":"#ffffff"}}. Remove a whole build: {{"op":"delete_build","build":3,"color":"#ffffff"}}.
 6. Animations: anything that should keep moving gets an "anim" on its create action. Everyone in the scene sees it move. Copies made by the power tools get it too, and their pivot and path move with them.
+   "Make it move", "drive", "go around", "fly", "float", "spin", "swing", "dance" or "animate it" mean an animation; "move it" somewhere ("5 m to the left", "next to the tree") means a new position (an update).
    - "spin": turns around "axis" ("x", "y" or "z") through "pivot" ([x, y, z] like a position; default: its own center), one turn every "period" seconds; "amount": -1 turns the other way. Wheels, fans, windmill blades (each blade's pivot is the hub's center), carousels, a ferris wheel.
    - "orbit": goes around like spin but keeps facing the same way. Planets, carousel horses, a bird circling.
    - "bob": moves back and forth along "axis" by "amount" meters each way, once every "period" seconds. Boats, floating islands, a hovering drone.
@@ -472,7 +624,8 @@ Power tools (one action becomes many objects; use them for anything repeated):
    Give repeated copies different "phase" values (0 to 1) so they don't move in lockstep. Keep it believable: windmill blades about one turn every 3 seconds, cars 8 to 15 m/s.
    Windmill blade (one of four around a hub at 0, 6.5, 1.2): {{"op":"create","kind":"box","color":"#eeeeee","px":0,"py":9,"pz":1.2,"sx":0.6,"sy":5,"sz":0.1,"anim":{{"type":"spin","axis":"z","pivot":[0,6.5,1.2],"period":3}}}}
    A car around a 40 x 40 m block: {{"op":"create","kind":"model","model":"car_sedan","color":"#cc0000","px":-20,"py":1.17,"pz":-20,"ry":90,"anim":{{"type":"path","path":[[-20,1.17,-20],[20,1.17,-20],[20,1.17,20],[-20,1.17,20]],"period":14}}}}
-   Objects that already move show their "anim" above. To animate existing objects the user points to, or change or stop how they move (faster, slower, the other way), set "edit_existing" to true and use {{"op":"animate","id":7,"color":"#ffffff","anim":{{"type":"bob","axis":"y","amount":0.5,"period":3}}}} ("anim": {{"type":"none"}} stops it).
+   Objects that already move show their "anim" above. To animate existing objects the user points to, or change or stop how they move (faster, slower, the other way), set "edit_existing" to true and use {{"op":"animate","id":7,"color":"#ffffff","anim":{{"type":"bob","axis":"y","amount":0.5,"period":3}}}} ("anim": {{"type":"none"}} stops it). "ids" sends many objects the same way (several cars on one path are spaced out along it).
+   An existing object's path starts at its current position; existing cars are turned to face along their path automatically. Make the car (id 12, at 5, 0.75, 3) drive around a block: {{"op":"animate","id":12,"color":"#cc0000","anim":{{"type":"path","path":[[5,0.75,3],[25,0.75,3],[25,0.75,23],[5,0.75,23]],"period":10}}}}
 
 Example answer for "a small table with a lamp" (it only shows the format and how parts attach; don't copy it):
 {EXAMPLE}"##
@@ -529,7 +682,23 @@ fn ask_gemini(ctx: &mut ProcedureContext, key: &str, instructions: &str, detaile
 fn plan_schema() -> Value {
     // Kept simple on purpose: Gemini rejects schemas with many constraints ("too many states").
     // The limits are in the instructions, and read_plan clamps every value and caps the count.
+    // "propertyOrdering" sets the order Gemini writes the fields in. Without it Gemini writes them
+    // alphabetically and skips optional fields that come early, like "anim" (no animations at all).
     let num = json!({ "type": "number" });
+    let anim = json!({
+        "type": "object",
+        "properties": {
+            "type": { "type": "string", "enum": ["spin", "orbit", "bob", "sway", "path", "none"] },
+            "axis": { "type": "string", "enum": ["x", "y", "z"] },
+            "pivot": { "type": "array", "items": num },
+            "path": { "type": "array", "items": { "type": "array", "items": num } },
+            "period": num,
+            "amount": num,
+            "phase": num,
+        },
+        "required": ["type"],
+        "propertyOrdering": ["type", "axis", "pivot", "path", "period", "amount", "phase"],
+    });
     json!({
         "type": "object",
         "properties": {
@@ -541,29 +710,35 @@ fn plan_schema() -> Value {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "op": { "type": "string", "enum": ["create", "copy_group", "update", "delete"] },
+                        "op": { "type": "string", "enum": ["create", "copy_group", "update", "delete", "delete_build", "animate"] },
                         "id": { "type": "integer" },
+                        "ids": { "type": "array", "items": { "type": "integer" } }, // the same update, delete or animate for many
+                        "build": { "type": "integer" }, // which AI build "delete_build" removes
                         "kind": { "type": "string", "enum": KINDS.iter().copied().chain(["model"]).collect::<Vec<_>>() },
                         "model": { "type": "string" }, // a MODELS id, when kind is "model"
                         "color": { "type": "string", "description": "hex color like #ff8800" },
                         "px": num, "py": num, "pz": num,
                         "sx": num, "sy": num, "sz": num,
                         "rx": num, "ry": num, "rz": num,
-                        // Gemini writes fields in alphabetical order, so the repeat fields have names that
-                        // come after the shape's own fields: it decides on copies after describing the shape.
                         "part_of": { "type": "string" },
-                        "step_x": num, "step_y": num, "step_z": num,
-                        "step2_x": num, "step2_z": num,
                         "times": { "type": "integer" },
-                        "times2": { "type": "integer" },
+                        "step_x": num, "step_y": num, "step_z": num,
                         "turn": num, "turn_x": num, "turn_z": num,
+                        "times2": { "type": "integer" },
+                        "step2_x": num, "step2_z": num,
+                        "anim": anim, // keeps moving (animation.rs parse_ai)
                     },
                     // Gemini skips optional fields it should fill (colors came back missing), so color is required.
                     "required": ["op", "color"],
+                    "propertyOrdering": [
+                        "op", "id", "ids", "build", "kind", "model", "color", "px", "py", "pz", "sx", "sy", "sz", "rx", "ry", "rz",
+                        "part_of", "times", "step_x", "step_y", "step_z", "turn", "turn_x", "turn_z", "times2", "step2_x", "step2_z", "anim",
+                    ],
                 },
             },
         },
         "required": ["plan", "edit_existing", "standalone", "actions"],
+        "propertyOrdering": ["plan", "edit_existing", "standalone", "actions"],
     })
 }
 
@@ -690,8 +865,9 @@ struct Plan {
     center: (f64, f64),
     standalone: bool, // a self-contained new build: apply_plan moves it to free space
     creates: Vec<AiShape>,
-    updates: Vec<(u64, Value)>,
+    updates: Vec<(u64, Value)>, // a "kind" in the patch reshapes the object
     deletes: Vec<u64>,
+    delete_builds: Vec<u64>, // whole ai_builds to delete (their objects are looked up when applying)
     animates: Vec<(u64, Option<crate::animation::AiAnim>)>, // start (Some) or stop (None) on existing objects
 }
 
@@ -703,6 +879,7 @@ fn read_plan(text: &str, look: &Look) -> Result<Plan, String> {
         creates: Vec::new(),
         updates: Vec::new(),
         deletes: Vec::new(),
+        delete_builds: Vec::new(),
         animates: Vec::new(),
     };
     let Some(actions) = parsed["actions"].as_array() else {
@@ -713,8 +890,8 @@ fn read_plan(text: &str, look: &Look) -> Result<Plan, String> {
     let ops = |op: &str| actions.iter().filter(|a| a["op"] == op).count();
     let first_edit = actions.iter().find(|a| a["op"] != "create").map(|a| a.to_string()).unwrap_or_default();
     spacetimedb::log::info!(
-        "ask_ai: the model planned {:?}, edit_existing={may_edit}, {} create / {} update / {} delete {}",
-        short(parsed["plan"].as_str().unwrap_or("")), ops("create"), ops("update"), ops("delete"), short(&first_edit)
+        "ask_ai: the model planned {:?}, edit_existing={may_edit}, {} create / {} update / {} delete / {} delete_build {}",
+        short(parsed["plan"].as_str().unwrap_or("")), ops("create"), ops("update"), ops("delete"), ops("delete_build"), short(&first_edit)
     );
     let mut groups: Vec<(String, AiShape)> = Vec::new(); // shapes tagged "part_of" a group, for copy_group
     for a in actions.iter().take(MAX_ACTIONS) {
@@ -752,24 +929,50 @@ fn read_plan(text: &str, look: &Look) -> Result<Plan, String> {
                 }
             }
             "update" if may_edit => {
-                if let Some(n) = shown(look, a) {
+                let targets = targets(look, a);
+                let mut patch = a.clone();
+                if targets.len() > 1 {
+                    // the same change for many objects: a position would put them all on one spot
+                    if let Some(fields) = patch.as_object_mut() {
+                        for k in ["px", "py", "pz"] {
+                            fields.remove(k);
+                        }
+                    }
+                }
+                for n in targets {
                     if !plan.deletes.contains(&n.id) {
                         plan.updates.retain(|(id, _)| *id != n.id);
-                        plan.updates.push((n.id, a.clone()));
+                        plan.updates.push((n.id, patch.clone()));
                     }
                 }
             }
             "animate" if may_edit => {
-                if let Some(n) = shown(look, a) {
+                let targets = targets(look, a);
+                let count = targets.len();
+                for (i, n) in targets.into_iter().enumerate() {
+                    // Several objects sent along one path would drive on top of each other: space them out.
+                    let mut anim = a["anim"].clone();
+                    if count > 1 && anim["type"] == "path" {
+                        anim["phase"] = json!(anim["phase"].as_f64().unwrap_or(0.0) + i as f64 / count as f64);
+                    }
                     plan.animates.retain(|(id, _)| *id != n.id);
-                    plan.animates.push((n.id, crate::animation::parse_ai(&a["anim"]))); // no (or "none") anim: stop it
+                    plan.animates.push((n.id, crate::animation::parse_ai(&anim))); // no (or "none") anim: stop it
                 }
             }
             "delete" if may_edit => {
-                if let Some(n) = shown(look, a) {
+                for n in targets(look, a) {
                     plan.updates.retain(|(id, _)| *id != n.id);
                     if !plan.deletes.contains(&n.id) && plan.deletes.len() < MAX_DELETES {
                         plan.deletes.push(n.id);
+                    }
+                }
+            }
+            // A whole build, if it's one of the builds the model was shown. (Its own op, not a field on
+            // "delete": a model copying an object's "build" into its delete must not remove the whole build.)
+            "delete_build" if may_edit => {
+                if let Some(b) = id_of(&a["build"]).filter(|b| look.builds.iter().any(|x| x.id == *b)) {
+                    if !plan.delete_builds.contains(&b) {
+                        plan.delete_builds.push(b);
                     }
                 }
             }
@@ -871,11 +1074,27 @@ fn matrix_to_euler(m: &[[f64; 3]; 3]) -> [f64; 3] {
     }
 }
 
-/// The nearby object an update or delete points at (ids Gemini wasn't shown are ignored).
-fn shown<'a>(look: &'a Look, a: &Value) -> Option<&'a Nearby> {
-    let v = &a["id"]; // normally 112, but accept 112.0 and "112" too
-    let id = v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)).or_else(|| v.as_str()?.trim().parse().ok())?;
-    look.nearby.iter().find(|n| n.id == id)
+/// The objects an update, delete or animate points at: "id", or "ids" for many. Only objects the
+/// model was shown count (other ids are ignored), each once.
+fn targets<'a>(look: &'a Look, a: &Value) -> Vec<&'a Nearby> {
+    let ids = std::iter::once(&a["id"]).chain(a["ids"].as_array().into_iter().flatten()).filter_map(id_of);
+    let mut out: Vec<&Nearby> = Vec::new();
+    for id in ids {
+        if out.iter().any(|n| n.id == id) {
+            continue;
+        }
+        if let Some(n) = look.nearby.iter().find(|n| n.id == id) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// An id the model wrote: normally 112, but accept 112.0 and "112" too.
+fn id_of(v: &Value) -> Option<u64> {
+    v.as_u64()
+        .or_else(|| v.as_f64().filter(|f| f.is_finite() && *f >= 0.0).map(|f| f as u64))
+        .or_else(|| v.as_str()?.trim().parse().ok())
 }
 
 /// Copies the fields Gemini gave onto a shape, clamping each one. Missing fields stay as they were.
@@ -915,50 +1134,102 @@ fn apply_plan(ctx: &ReducerContext, me: Identity, scene_id: u64, prompt: &str, p
     };
     let mut skipped = 0;
 
+    let mut replaced = Vec::new(); // (old id, new id) of reshaped objects, which stay in their build
     for (id, patch) in &plan.updates {
-        if let Some(mut obj) = editable(ctx, *id, scene_id, me, &mut skipped) {
-            let before = state_of(&obj);
-            patch_object(&mut obj, patch, plan.center);
-            let after = state_of(&obj);
-            if after != before {
-                ctx.db.object().id().update(obj);
-                undo.changed.push(ObjectChange { before, after });
+        let Some(mut obj) = editable(ctx, *id, scene_id, me, &mut skipped) else {
+            continue;
+        };
+        let before = state_of(&obj);
+        match reshaped_kind(patch).filter(|kind| *kind != obj.kind) {
+            Some(kind) => {
+                // A new shape. The client builds an object's mesh once, when its row arrives, so the
+                // object is replaced by a new one of the new kind (every editor shows that right away).
+                let shape = reshape(&obj, &kind, patch, plan.center);
+                let (position, rotation, scale) = to_row(&shape, plan.center);
+                let row = ctx.db.object().insert(new_object(scene_id, kind, shape.color.clone(), position, rotation, scale));
+                move_animation(ctx, obj.id, row.id);
+                ctx.db.object().id().delete(obj.id);
+                replaced.push((obj.id, row.id));
+                undo.changed.push(ObjectChange { before, after: state_of(&row) });
+            }
+            None => {
+                patch_object(&mut obj, patch, plan.center);
+                let after = state_of(&obj);
+                if after != before {
+                    ctx.db.object().id().update(obj);
+                    undo.changed.push(ObjectChange { before, after });
+                }
             }
         }
     }
-    for id in &plan.deletes {
-        if let Some(obj) = editable(ctx, *id, scene_id, me, &mut skipped) {
+    remap_builds(ctx, scene_id, &replaced);
+
+    // Deletes: the objects named one by one, then every object of each whole build (as it is now).
+    let mut doomed = plan.deletes.clone();
+    for b in &plan.delete_builds {
+        if let Some(build) = ctx.db.ai_build().id().find(*b).filter(|b| b.scene_id == scene_id) {
+            doomed.extend(build.object_ids);
+        }
+    }
+    let mut seen = HashSet::new();
+    doomed.retain(|id| seen.insert(*id));
+    let mut motions = Vec::new(); // how objects moved before this change, for undo
+    for id in doomed.into_iter().take(MAX_DELETES) {
+        if let Some(obj) = editable(ctx, id, scene_id, me, &mut skipped) {
             undo.removed.push(state_of(&obj));
-            ctx.db.object().id().delete(*id);
-            crate::animation::forget(ctx, *id);
+            ctx.db.object().id().delete(id);
+            if let Some(anim) = ctx.db.animation().object_id().find(id) {
+                motions.push(MotionBefore { object_id: id, anim: Some(anim) });
+                crate::animation::forget(ctx, id);
+            }
         }
     }
-    let mut animated = 0;
+    let mut animated = HashSet::new();
     for (id, anim) in &plan.animates {
-        if let Some(obj) = editable(ctx, *id, scene_id, me, &mut skipped) {
-            match anim.as_ref().and_then(|a| a.to_row(obj.id, scene_id, obj.position, plan.center, ctx.timestamp)) {
-                Some(row) => crate::animation::put(ctx, row),
-                None => crate::animation::forget(ctx, obj.id),
+        let id = replaced.iter().find(|(old, _)| old == id).map_or(*id, |(_, new)| *new); // reshaped just now
+        let Some(mut obj) = editable(ctx, id, scene_id, me, &mut skipped) else {
+            continue;
+        };
+        motions.push(MotionBefore { object_id: id, anim: ctx.db.animation().object_id().find(id) });
+        match anim.as_ref().and_then(|a| a.to_row(id, scene_id, obj.position, plan.center, ctx.timestamp)) {
+            Some(mut row) => {
+                level_path(&mut row);
+                let before = state_of(&obj);
+                if face_first_leg(&obj.kind, &mut obj.rotation, &row) {
+                    let obj = ctx.db.object().id().update(obj);
+                    record_change(&mut undo, before, state_of(&obj));
+                }
+                crate::animation::put(ctx, row);
             }
-            animated += 1;
+            None => crate::animation::forget(ctx, id),
         }
+        animated.insert(id);
     }
     // A standalone build goes where the caller is looking if there's room, otherwise to the nearest
     // free spot. This runs inside the transaction, so it sees builds that just landed from others.
     let center = if plan.standalone { free_spot(ctx, scene_id, plan) } else { plan.center };
     for shape in &plan.creates {
         let (position, rotation, scale) = to_row(shape, center);
-        let row = ctx.db.object().insert(new_object(scene_id, shape.kind.clone(), shape.color.clone(), position, rotation, scale));
-        if let Some(anim) = shape.anim.as_ref().and_then(|a| a.to_row(row.id, scene_id, row.position, center, ctx.timestamp)) {
+        let mut row = ctx.db.object().insert(new_object(scene_id, shape.kind.clone(), shape.color.clone(), position, rotation, scale));
+        if let Some(mut anim) = shape.anim.as_ref().and_then(|a| a.to_row(row.id, scene_id, row.position, center, ctx.timestamp)) {
+            level_path(&mut anim);
+            if face_first_leg(&row.kind, &mut row.rotation, &anim) {
+                row = ctx.db.object().id().update(row);
+            }
             crate::animation::put(ctx, anim);
         }
         undo.created.push(state_of(&row));
     }
+    if !undo.created.is_empty() {
+        remember_build(ctx, me, scene_id, prompt, undo.created.iter().map(|s| s.id).collect());
+    }
     let moved = (center.0 - plan.center.0).hypot(center.1 - plan.center.1);
 
+    // Changed objects, each counted once (a car can be turned and set moving).
+    let changed: HashSet<u64> = undo.changed.iter().map(|c| c.after.id).chain(animated).collect();
     let result = AiResult {
         added: undo.created.len() as u32,
-        changed: undo.changed.len() as u32 + animated,
+        changed: changed.len() as u32,
         removed: undo.removed.len() as u32,
         skipped,
         note: if moved > 0.5 { format!("Placed it {moved:.0} m to the side, where there was room.") } else { String::new() },
@@ -971,8 +1242,54 @@ fn apply_plan(ctx: &ReducerContext, me: Identity, scene_id: u64, prompt: &str, p
         } else {
             ctx.db.ai_undo().insert(undo);
         }
+        ctx.db.ai_undo_motion().identity().delete(me);
+        if !motions.is_empty() {
+            ctx.db.ai_undo_motion().insert(AiUndoMotion { identity: me, before: motions });
+        }
     }
     result
+}
+
+/// Adds a change to the undo record, or extends the one already there for the same object (a car
+/// that was moved and then turned to face its path is one change).
+fn record_change(undo: &mut AiUndo, before: ObjectState, after: ObjectState) {
+    match undo.changed.iter_mut().find(|c| c.after.id == after.id) {
+        Some(c) => c.after = after,
+        None => undo.changed.push(ObjectChange { before, after }),
+    }
+}
+
+/// A level path close to the object's own height is meant to keep it on whatever it stands on (cars
+/// on a road): it runs at the object's own height, so a taller car sharing a path with a lower one
+/// doesn't sink into the ground. Paths that climb, or fly well above or below it, are left alone.
+fn level_path(anim: &mut Animation) {
+    let Some(first) = anim.path.first().map(|p| p.y) else {
+        return;
+    };
+    let level = anim.path.iter().all(|p| (p.y - first).abs() < 0.05);
+    if anim.kind == "path" && level && first.abs() < 1.5 {
+        anim.path.iter_mut().for_each(|p| p.y = 0.0);
+    }
+}
+
+/// Path animations turn an object from its resting rotation as the path turns (followPath in
+/// multiplayer.js), so a vehicle drives forwards only if it rests facing along the path's first leg.
+/// The car kit's models face +z; turn them level toward the first leg. True if the rotation changed.
+fn face_first_leg(kind: &str, rotation: &mut Vec3, anim: &Animation) -> bool {
+    let faces_forward = kind.starts_with("asset:car-kit/") && kind != "asset:car-kit/cone";
+    if !faces_forward || anim.kind != "path" || anim.path.len() < 2 {
+        return false;
+    }
+    let (dx, dz) = (anim.path[1].x - anim.path[0].x, anim.path[1].z - anim.path[0].z);
+    if dx.abs() + dz.abs() < 1e-3 {
+        return false;
+    }
+    let level = Vec3 { x: 0.0, y: dx.atan2(dz), z: 0.0 };
+    if (rotation.x - level.x).abs() + (rotation.y - level.y).abs() + (rotation.z - level.z).abs() < 1e-4 {
+        return false;
+    }
+    *rotation = level;
+    true
 }
 
 /// Applies only the fields Gemini changed, on top of the object as it is now. Fields it didn't
@@ -984,18 +1301,96 @@ fn patch_object(obj: &mut Object, patch: &Value, center: (f64, f64)) {
     if model_by_kind(&obj.kind).is_some() {
         shape.size = scaled_evenly(current.size, patch); // models resize without stretching
     }
+    let resized = mentions(["sx", "sy", "sz"]);
+    if resized {
+        keep_bottom(&mut shape, &current, patch);
+    }
     let (position, rotation, scale) = to_row(&shape, center);
     if patch["color"].as_str().and_then(color).is_some() {
         obj.color = shape.color;
     }
     if mentions(["px", "py", "pz"]) {
         obj.position = position;
+    } else if resized {
+        obj.position.y = position.y; // it grew or shrank where it stands
     }
-    if mentions(["sx", "sy", "sz"]) {
+    if resized {
         obj.scale = scale;
     }
     if mentions(["rx", "ry", "rz"]) {
         obj.rotation = rotation;
+    }
+}
+
+/// The kind an update asks for: one of KINDS, or a model ("asset:<path>"). None when it names none
+/// (or one we don't know); apply_plan also ignores it when it's the kind the object already is.
+fn reshaped_kind(patch: &Value) -> Option<String> {
+    match patch["kind"].as_str()? {
+        "model" => patch["model"].as_str().and_then(model_by_id).map(|m| format!("asset:{}", m.1)),
+        kind if KINDS.contains(&kind) => Some(kind.to_string()),
+        _ => None,
+    }
+}
+
+/// The object as a new kind: same place, rotation, color and bounding box, with the patch's fields
+/// on top. A model gets its own (listed) size instead, scaled evenly if the patch gives a size.
+fn reshape(obj: &Object, kind: &str, patch: &Value, center: (f64, f64)) -> AiShape {
+    let current = from_row(obj, center);
+    let mut shape = merge(AiShape { kind: kind.to_string(), anim: None, ..current.clone() }, patch);
+    if let Some(m) = model_by_kind(kind) {
+        shape.size = scaled_evenly(default_size(m), patch);
+    }
+    keep_bottom(&mut shape, &current, patch);
+    shape
+}
+
+/// When a change makes an upright object taller or shorter without saying where it goes, it keeps
+/// standing on whatever it stood on: its bottom stays put, instead of its center (which would sink
+/// a grown object into the ground). A flat plane's bottom is the plane itself.
+fn keep_bottom(shape: &mut AiShape, current: &AiShape, patch: &Value) {
+    let upright = |s: &AiShape| s.kind == "plane" || (s.rot[0].abs() < 1.0 && s.rot[2].abs() < 1.0);
+    if number(&patch["py"]).is_some() || !upright(shape) || !upright(current) {
+        return;
+    }
+    let half = |s: &AiShape| if s.kind == "plane" { 0.0 } else { s.size[1] / 2.0 };
+    shape.pos[1] = (current.pos[1] - half(current) + half(shape)).clamp(MIN_Y, MAX_Y);
+}
+
+/// A replaced object keeps moving the way the old one did.
+fn move_animation(ctx: &ReducerContext, from: u64, to: u64) {
+    if let Some(mut a) = ctx.db.animation().object_id().find(from) {
+        ctx.db.animation().object_id().delete(from);
+        a.object_id = to;
+        ctx.db.animation().insert(a);
+    }
+}
+
+/// Remembers which objects one AI request made (ai_build), keeping the newest BUILDS_KEPT per scene.
+fn remember_build(ctx: &ReducerContext, who: Identity, scene_id: u64, prompt: &str, object_ids: Vec<u64>) {
+    ctx.db.ai_build().insert(AiBuild { id: 0, scene_id, who, prompt: prompt.to_string(), object_ids });
+    let mut ids: Vec<u64> = ctx.db.ai_build().scene_id().filter(scene_id).map(|b| b.id).collect();
+    ids.sort_unstable();
+    for id in &ids[..ids.len().saturating_sub(BUILDS_KEPT)] {
+        ctx.db.ai_build().id().delete(*id);
+    }
+}
+
+/// Objects replaced by new rows (a reshape, or brought back by undo) stay part of their build.
+fn remap_builds(ctx: &ReducerContext, scene_id: u64, replaced: &[(u64, u64)]) {
+    if replaced.is_empty() {
+        return;
+    }
+    let new_id: HashMap<u64, u64> = replaced.iter().copied().collect();
+    let builds: Vec<AiBuild> = ctx.db.ai_build().scene_id().filter(scene_id).collect();
+    for mut b in builds {
+        if b.object_ids.iter().any(|id| new_id.contains_key(id)) {
+            for id in &mut b.object_ids {
+                if let Some(n) = new_id.get(id) {
+                    *id = *n;
+                }
+            }
+            ctx.db.ai_build().id().update(b);
+        }
     }
 }
 
