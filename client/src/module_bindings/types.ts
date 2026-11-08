@@ -76,3 +76,16 @@ export const Vec3 = __t.object("Vec3", {
 });
 export type Vec3 = __Infer<typeof Vec3>;
 
+export const Viewer = __t.object("Viewer", {
+  identity: __t.identity(),
+  sceneId: __t.u64(),
+  get position() {
+    return Vec3;
+  },
+  get rotation() {
+    return Vec3;
+  },
+  updatedAt: __t.timestamp(),
+});
+export type Viewer = __Infer<typeof Viewer>;
+
