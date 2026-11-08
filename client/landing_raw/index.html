@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>CoScene: build 3D scenes together, live</title>
+		<meta name="description" content="CoScene is a real-time multiplayer 3D editor. Edit one shared scene with your team, with live sync, object locking and presence.">
+		<meta property="og:title" content="CoScene: build 3D scenes together, live">
+		<meta property="og:description" content="A real-time multiplayer 3D editor built at HackUTD 2026.">
+		<meta property="og:type" content="website">
+		<link rel="icon" href="/files/favicon_white.ico">
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+		<link rel="stylesheet" href="site/site.css">
+	</head>
+	<body>
+
+		<header class="site-header">
+			<div class="container">
+				<a class="logo" href="./">
+					<svg class="logo-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+					CoScene
+				</a>
+				<a id="header-action" class="btn btn-outline btn-sm" href="login.html">Log in</a>
+			</div>
+		</header>
+
+		<main>
+			<section class="hero">
+				<div class="container">
+					<div>
+						<p class="pill">HackUTD 2026 · multiplayer three.js editor</p>
+						<h1>Build 3D scenes <em>together</em>, live.</h1>
+						<p class="hero-lead">CoScene puts your whole team inside one shared 3D world. Add, move and recolor objects, and watch everyone else do the same in real time.</p>
+						<div class="hero-actions">
+							<a class="btn btn-primary btn-lg glow" href="login.html" data-start>Start building <i data-icon="arrow-right"></i></a>
+							<a class="btn btn-ghost btn-lg" href="#how">How it works</a>
+						</div>
+					</div>
+					<div class="cube-stage" aria-hidden="true">
+						<div class="cube-wrap"><div class="cube"><span></span><span></span><span></span><span></span><span></span><span></span></div></div>
+					</div>
+				</div>
+			</section>
+
+			<section id="how" class="how">
+				<div class="container">
+					<p class="section-kicker">How it works</p>
+					<h2>One scene. Many hands.</h2>
+
+					<div class="features">
+						<div class="feature">
+							<i data-icon="box"></i>
+							<h3>Shared scene</h3>
+							<p>Everyone in a server edits the same 3D world: boxes, spheres, cylinders, planes and lights.</p>
+						</div>
+						<div class="feature">
+							<i data-icon="radio"></i>
+							<h3>Live sync</h3>
+							<p>Every move, rotate, scale and recolor shows up instantly for everyone. The database is the source of truth.</p>
+						</div>
+						<div class="feature">
+							<i data-icon="lock"></i>
+							<h3>Object locking</h3>
+							<p>Select an object and it's yours. Others see your outline and name in your color until you let go.</p>
+						</div>
+						<div class="feature">
+							<i data-icon="users"></i>
+							<h3>Presence</h3>
+							<p>A live panel shows who's in the scene, so you always know who you're building with.</p>
+						</div>
+					</div>
+
+					<div class="cta">
+						<div>
+							<h3>Ready to open a scene?</h3>
+							<p>Create a server and share its invite code with your team.</p>
+						</div>
+						<a class="btn btn-primary btn-lg" href="login.html" data-start>Get started <i data-icon="arrow-right"></i></a>
+					</div>
+				</div>
+			</section>
+		</main>
+
+		<footer class="site-footer">CoScene · built at HackUTD 2026 · powered by SpacetimeDB</footer>
+
+		<script type="module" src="../src/site/landing.js"></script>
+	</body>
+</html>

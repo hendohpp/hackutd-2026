@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Your servers · CoScene</title>
+		<meta name="description" content="Create, join and open your CoScene 3D servers.">
+		<link rel="icon" href="/files/favicon_white.ico">
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+		<link rel="stylesheet" href="site/site.css">
+	</head>
+	<body>
+
+		<header class="site-header bordered">
+			<div class="container">
+				<a class="logo" href="./">
+					<svg class="logo-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+					CoScene
+				</a>
+				<div class="header-actions">
+					<a class="btn btn-ghost btn-sm" href="./"><i data-icon="home"></i>Home</a>
+					<button id="me" class="me-button" type="button" title="Change your name" hidden></button>
+					<button id="auth" class="btn btn-ghost btn-sm" type="button" hidden></button>
+				</div>
+			</div>
+		</header>
+
+		<main class="lobby">
+			<div class="container">
+				<div class="lobby-head">
+					<div>
+						<p class="section-kicker">Lobby</p>
+						<h1>Your servers</h1>
+					</div>
+					<div class="lobby-actions">
+						<button id="open-join" class="btn btn-outline" type="button"><i data-icon="ticket"></i>Join with invite code</button>
+						<button id="open-create" class="btn btn-primary" type="button"><i data-icon="plus"></i>Create server</button>
+					</div>
+				</div>
+
+				<p id="guest-note" class="guest-note" hidden>You're a guest: your servers are remembered in this tab only. Sign in to create servers and see them on any device.</p>
+
+				<div id="server-grid" class="server-grid" aria-live="polite">
+					<div class="skeleton"></div>
+					<div class="skeleton"></div>
+					<div class="skeleton"></div>
+				</div>
+			</div>
+		</main>
+
+		<!-- Name -->
+		<dialog id="name-dialog" aria-labelledby="name-title">
+			<form novalidate>
+				<h2 id="name-title">Your name</h2>
+				<p class="lead">This is how collaborators see you in the editor.</p>
+				<div class="field">
+					<label for="name-input">Display name</label>
+					<input id="name-input" class="input" autocomplete="nickname" required>
+					<p class="field-error" aria-live="polite"></p>
+				</div>
+				<div class="dialog-actions">
+					<button class="btn btn-ghost" type="button" data-close>Cancel</button>
+					<button class="btn btn-primary" type="submit">Save name</button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- Create -->
+		<dialog id="create-dialog" aria-labelledby="create-title">
+			<h2 id="create-title">Create server</h2>
+			<form id="create-form" novalidate>
+				<p class="lead">Give your scene a name. You'll get an invite code to share.</p>
+				<div class="field">
+					<label for="create-input">Server name</label>
+					<input id="create-input" class="input" placeholder="My scene" maxlength="40" required>
+					<p class="field-error" aria-live="polite"></p>
+				</div>
+				<div class="dialog-actions">
+					<button class="btn btn-ghost" type="button" data-close>Cancel</button>
+					<button class="btn btn-primary" type="submit">Create server</button>
+				</div>
+			</form>
+			<div id="create-needs-sign-in">
+				<p class="lead">Creating a server needs an account, so it stays yours on every device. Guests can still join servers with an invite code.</p>
+				<div class="dialog-actions">
+					<button class="btn btn-ghost" type="button" data-close>Cancel</button>
+					<button id="create-sign-in" class="btn btn-primary" type="button">Sign in</button>
+				</div>
+			</div>
+		</dialog>
+
+		<!-- Join -->
+		<dialog id="join-dialog" aria-labelledby="join-title">
+			<form novalidate>
+				<h2 id="join-title">Join with invite code</h2>
+				<p class="lead">Enter the code someone shared with you.</p>
+				<div class="field">
+					<label for="join-input">Invite code</label>
+					<input id="join-input" class="input input-code" inputmode="numeric" placeholder="12" required>
+					<p class="field-error" aria-live="polite"></p>
+				</div>
+				<div class="dialog-actions">
+					<button class="btn btn-ghost" type="button" data-close>Cancel</button>
+					<button class="btn btn-primary" type="submit">Join server</button>
+				</div>
+			</form>
+		</dialog>
+
+		<!-- Created -->
+		<dialog id="created-dialog" aria-labelledby="created-title">
+			<h2 id="created-title">Server created</h2>
+			<p class="lead"><span id="created-name"></span> is ready. Share the invite code so others can join.</p>
+			<div class="code-box">
+				<div>
+					<p class="label">Invite code</p>
+					<p id="created-code" class="value"></p>
+				</div>
+				<button id="created-copy" class="btn btn-outline btn-sm" type="button"><i data-icon="copy"></i>Copy</button>
+			</div>
+			<div class="dialog-actions">
+				<button class="btn btn-ghost" type="button" data-close>Close</button>
+				<a id="created-open" class="btn btn-primary" href="#">Open scene <i data-icon="external-link"></i></a>
+			</div>
+		</dialog>
+
+		<script type="module" src="../src/site/servers.js"></script>
+	</body>
+</html>

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Log in · CoScene</title>
+		<meta name="description" content="Sign in or continue as a guest to join collaborative 3D scenes on CoScene.">
+		<link rel="icon" href="/files/favicon_white.ico">
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+		<link rel="stylesheet" href="site/site.css">
+	</head>
+	<body>
+		<main class="auth-page">
+			<div class="auth-box">
+				<a class="logo" href="./">
+					<svg class="logo-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+					CoScene
+				</a>
+
+				<div class="card">
+					<h1>Welcome</h1>
+					<p class="lead">Collaborators see you by name and color in the editor.</p>
+
+					<button id="sign-in" class="btn btn-primary btn-block btn-lg" type="button">Sign in or create an account</button>
+					<p class="hint">Keeps your servers on every device, and lets you create servers.</p>
+
+					<div id="divider" class="divider">or</div>
+
+					<form id="guest-form" novalidate>
+						<div class="field">
+							<label for="name">Continue as a guest</label>
+							<input id="name" class="input" name="name" autocomplete="nickname" placeholder="Your display name" required>
+							<p class="field-error" aria-live="polite"></p>
+						</div>
+						<button class="btn btn-outline btn-block" type="submit">Continue as guest</button>
+						<p class="hint">Guests can join servers with an invite code.</p>
+					</form>
+				</div>
+			</div>
+		</main>
+
+		<script type="module" src="../src/site/login.js"></script>
+	</body>
+</html>
