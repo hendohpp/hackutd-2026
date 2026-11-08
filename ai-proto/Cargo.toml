@@ -1,0 +1,10 @@
+[package]
+name = "ai-proto"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone test program, not part of the server module.
+[dependencies]
+serde_json = "1" # build and read JSON
+ureq = "2"       # small blocking HTTP client

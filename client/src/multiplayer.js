@@ -587,6 +587,19 @@ class Multiplayer {
 
 	}
 
+	// AI helper (ai-panel.js): runs the server's ask_ai procedure over this tab's connection, so the
+	// call doesn't count as a separate visit (which would release my locks and presence on the way out).
+	// Resolves to the number of objects added; rejects with the server's message.
+	async askAi( prompt ) {
+
+		if ( this.connected === false ) throw new Error( 'Not connected to the database yet.' );
+
+		const result = await this.conn.procedures.askAi( { sceneId: SCENE_ID, prompt } );
+		if ( 'err' in result ) throw new Error( result.err );
+		return result.ok;
+
+	}
+
 	// Edit > Clone. Returns false for objects the database doesn't know.
 	cloneObject( object ) {
 
