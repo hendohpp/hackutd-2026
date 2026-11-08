@@ -40,6 +40,7 @@ import DeleteObjectReducer from "./delete_object_reducer";
 import JoinSceneReducer from "./join_scene_reducer";
 import LockObjectReducer from "./lock_object_reducer";
 import SetAiKeyReducer from "./set_ai_key_reducer";
+import SetNameReducer from "./set_name_reducer";
 import UnlockObjectReducer from "./unlock_object_reducer";
 import UpdateCursorReducer from "./update_cursor_reducer";
 import UpdateObjectColorReducer from "./update_object_color_reducer";
@@ -146,6 +147,7 @@ const reducersSchema = __reducers(
   __reducerSchema("join_scene", JoinSceneReducer),
   __reducerSchema("lock_object", LockObjectReducer),
   __reducerSchema("set_ai_key", SetAiKeyReducer),
+  __reducerSchema("set_name", SetNameReducer),
   __reducerSchema("unlock_object", UnlockObjectReducer),
   __reducerSchema("update_cursor", UpdateCursorReducer),
   __reducerSchema("update_object_color", UpdateObjectColorReducer),

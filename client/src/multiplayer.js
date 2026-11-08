@@ -37,6 +37,8 @@ const PRESENCE_INTERVAL = 1_000;
 const VIEWER_INTERVAL = 100; // ms between camera updates while your camera moves (~10 per second)
 const VIEWER_HIDE_DISTANCE = 0.75; // hide someone whose camera is right where yours is (everyone starts at the same spot)
 const GAZE_LENGTH = 4; // length of the gaze line when it doesn't hit anything
+const MAX_NAME_CHARS = 24; // same limit as the server's set_name
+const NAME_KEY = 'coscene/name'; // localStorage: the browser remembers your name, so new tabs reuse it
 const EPSILON = 1e-4;
 
 // The kinds the database knows, built exactly like the editor's Add menu builds them.
@@ -67,6 +69,8 @@ class Multiplayer {
 		this.pendingAdds = 0;
 		this.viewers = new Map(); // identity hex -> camera marker for someone else's view
 		this.lastViewerSent = 0;
+		this.nameDialog = null;
+		this.nameSkipped = false; // "Not now" on the name dialog: don't ask again this visit
 
 		// Floating panel (top-left of the viewport): connection badge + who's here.
 		this.badge = createElement( 'div', 'coscene-badge', '<span class="dot"></span><span class="text">Connecting…</span>' );
@@ -358,6 +362,7 @@ class Multiplayer {
 		}
 
 		this.refreshPeople();
+		this.ensureName(); // my user row is in the cache now
 
 	}
 
@@ -897,6 +902,17 @@ class Multiplayer {
 			const dot = createElement( 'span', 'dot' );
 			dot.style.background = this.userColor( hex );
 			row.append( dot, document.createTextNode( this.userName( hex ) + ( hex === this.identity ? ' (you)' : '' ) ) );
+
+			if ( hex === this.identity ) {
+
+				// my own row opens the name dialog
+				row.classList.add( 'me' );
+				row.title = 'Change your name';
+				row.append( createElement( 'span', 'edit', 'edit' ) );
+				row.addEventListener( 'click', () => this.showNameDialog() );
+
+			}
+
 			return row;
 
 		} ) );
@@ -932,6 +948,111 @@ class Multiplayer {
 		}
 
 		this.refreshViewerStyles();
+
+	}
+
+	// -------------------------------------------------------------------------------------------
+	// Names: shown on lock labels, camera labels and the online list.
+
+	// Once my user row is loaded: keep the name the server has, else use the one this browser
+	// remembers (a new tab is a new identity), else ask.
+	ensureName() {
+
+		if ( this.identity === null ) return;
+
+		const me = this.findUser( this.identity );
+		if ( me === undefined ) return;
+
+		const saved = readSavedName();
+
+		if ( me.name && me.name !== 'Guest' ) {
+
+			if ( saved === undefined ) saveName( me.name );
+			return;
+
+		}
+
+		if ( saved !== undefined ) this.setName( saved );
+		else if ( this.nameSkipped === false ) this.showNameDialog();
+
+	}
+
+	// Returns false if the name is empty after cleanup.
+	setName( name ) {
+
+		const clean = Array.from( name.replace( /\p{Cc}/gu, '' ).trim() ).slice( 0, MAX_NAME_CHARS ).join( '' ).trim();
+		if ( clean === '' ) return false;
+
+		saveName( clean );
+
+		// While offline the name is only saved locally; ensureName() sends it after reconnecting.
+		if ( this.connected ) {
+
+			this.conn.reducers.setName( { name: clean } ).catch( ( error ) => this.toast( `Couldn't save your name: ${error.message}` ) );
+
+		}
+
+		return true;
+
+	}
+
+	showNameDialog() {
+
+		if ( this.nameDialog !== null ) return;
+
+		const current = this.identity !== null ? this.findUser( this.identity ) : undefined;
+		const renaming = current !== undefined && current.name !== 'Guest';
+
+		const backdrop = createElement( 'div', 'coscene-dialog-backdrop' );
+		const form = createElement( 'form', 'coscene-dialog', `
+			<h2 id="coscene-name-title"></h2>
+			<p></p>
+			<input id="coscene-name" name="name" maxlength="${MAX_NAME_CHARS}" autocomplete="nickname" placeholder="Your name" aria-labelledby="coscene-name-title">
+			<div class="actions"><button type="button" class="secondary"></button><button type="submit"></button></div>` );
+
+		form.querySelector( 'h2' ).textContent = renaming ? 'Change your name' : 'What should we call you?';
+		form.querySelector( 'p' ).textContent = 'Others see it on what you\'re editing and next to your camera.';
+		form.querySelector( '.secondary' ).textContent = renaming ? 'Cancel' : 'Not now';
+		form.querySelector( '[type="submit"]' ).textContent = renaming ? 'Save' : 'Join';
+
+		const input = form.querySelector( 'input' );
+		input.value = renaming ? current.name : ( readSavedName() || '' );
+
+		// Keep typing out of the editor's shortcuts (Backspace deletes the selection, W/E/R switch tools).
+		form.addEventListener( 'keydown', ( event ) => {
+
+			event.stopPropagation();
+			if ( event.key === 'Escape' ) this.closeNameDialog( true );
+
+		} );
+
+		form.addEventListener( 'submit', ( event ) => {
+
+			event.preventDefault();
+
+			if ( this.setName( input.value ) ) this.closeNameDialog( false );
+			else input.focus();
+
+		} );
+
+		form.querySelector( '.secondary' ).addEventListener( 'click', () => this.closeNameDialog( true ) );
+
+		backdrop.append( form );
+		document.body.append( backdrop );
+		this.nameDialog = backdrop;
+
+		input.focus();
+		input.select();
+
+	}
+
+	closeNameDialog( skipped ) {
+
+		if ( this.nameDialog === null ) return;
+
+		this.nameDialog.remove();
+		this.nameDialog = null;
+		if ( skipped ) this.nameSkipped = true;
 
 	}
 
@@ -1406,6 +1527,30 @@ function createElement( tag, className, html ) {
 	element.className = className;
 	if ( html !== undefined ) element.innerHTML = html;
 	return element;
+
+}
+
+function readSavedName() {
+
+	try {
+
+		return localStorage.getItem( NAME_KEY ) || undefined;
+
+	} catch {
+
+		return undefined;
+
+	}
+
+}
+
+function saveName( name ) {
+
+	try {
+
+		localStorage.setItem( NAME_KEY, name );
+
+	} catch { /* storage unavailable: we just ask again next visit */ }
 
 }
 
