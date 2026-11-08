@@ -1,7 +1,3 @@
-/* CoScene site pages: landing (index.html), login.html, servers.html. Not used by the editor. */
-
-/* ---- Tokens: change the look here ---- */
-
 :root {
 	--bg: #0c0e14;            /* page background: blue-black, like the editor viewport at night */
 	--card: #131722;          /* raised panels */

@@ -4,12 +4,12 @@
 import { signedInToken } from '../auth.js';
 
 // Same key as src/multiplayer.js: the name this browser uses as a guest.
-const NAME_KEY = 'coscene/name';
+const NAME_KEY = 'collab3d/name';
 
 export const MAX_NAME_CHARS = 24; // same limit as the server's set_name
 
 // sessionStorage: after signing in from the login page, the landing page sends you to the servers page
-export const AFTER_SIGN_IN_KEY = 'coscene/after-sign-in';
+export const AFTER_SIGN_IN_KEY = 'collab3d/after-sign-in';
 
 // ---------------------------------------------------------------------------------------------
 // Pages and names

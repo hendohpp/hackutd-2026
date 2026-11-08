@@ -42,7 +42,7 @@ async function returnFromSignIn() {
 
 	} catch ( error ) {
 
-		console.warn( '[coscene] sign-in failed:', error );
+		console.warn( '[collab3d] sign-in failed:', error );
 
 		if ( fromLobby ) {
 
