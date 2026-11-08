@@ -2,7 +2,7 @@
 
 A multiplayer version of the [three.js editor](https://threejs.org/editor/): everyone who opens the same URL edits one shared 3D scene in real time. SpacetimeDB is the entire backend; three.js only draws what's in the database.
 
-**Live:** https://hackutd-2026.vercel.app/ (database `collab3d-hackutd` on SpacetimeDB Maincloud)
+**Live:** https://hackutd-2026.vercel.app/ (database `collab3d` on SpacetimeDB Maincloud)
 
 ## How it works
 
@@ -42,7 +42,7 @@ spacetime publish collab3d --module-path server --server local    # add --delete
 cd client && npm run generate                                     # rewrites client/src/module_bindings
 ```
 
-To update the live database: `spacetime publish collab3d-hackutd --module-path server --server maincloud` (needs the owner's `spacetime login`).
+To update the live database: `spacetime publish collab3d --module-path server --server maincloud` (needs the owner's `spacetime login`).
 
 ### Troubleshooting
 

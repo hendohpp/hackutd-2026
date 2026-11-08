@@ -14,7 +14,7 @@ import { safeSignedInToken, storageGet, storageSet, storageRemove } from './comm
 
 // Same database and storage key as src/multiplayer.js. Keep them in sync.
 const URI = import.meta.env.VITE_SPACETIME_URI || ( import.meta.env.PROD ? 'wss://maincloud.spacetimedb.com' : 'ws://localhost:3000' );
-const DB_NAME = import.meta.env.VITE_SPACETIME_DB || ( import.meta.env.PROD ? 'collab3d-hackutd' : 'collab3d' );
+const DB_NAME = import.meta.env.VITE_SPACETIME_DB || ( import.meta.env.PROD ? 'collab3d' : 'collab3d' );
 const TOKEN_KEY = `${URI}/${DB_NAME}/auth_token`;
 
 // Connects, subscribes to your servers and to people, then calls onReady( conn, myHexIdentity, signedIn ).
