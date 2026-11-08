@@ -1,7 +1,7 @@
 use spacetimedb::{ReducerContext, Table};
 
 use crate::reducers::objects::release_user_locks;
-use crate::tables::{presence, user, User};
+use crate::tables::{presence, user, viewer, User};
 
 #[spacetimedb::reducer(client_connected)]
 pub fn client_connected(ctx: &ReducerContext) {
@@ -18,4 +18,5 @@ pub fn client_connected(ctx: &ReducerContext) {
 pub fn client_disconnected(ctx: &ReducerContext) {
     release_user_locks(ctx, ctx.sender());
     ctx.db.presence().identity().delete(ctx.sender());
+    ctx.db.viewer().identity().delete(ctx.sender());
 }

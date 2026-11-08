@@ -15,6 +15,7 @@ import UnlockObjectReducer from "../unlock_object_reducer";
 import UpdateCursorReducer from "../update_cursor_reducer";
 import UpdateObjectColorReducer from "../update_object_color_reducer";
 import UpdateObjectTransformReducer from "../update_object_transform_reducer";
+import UpdateViewerReducer from "../update_viewer_reducer";
 
 export type CreateObjectParams = __Infer<typeof CreateObjectReducer>;
 export type CreateSceneParams = __Infer<typeof CreateSceneReducer>;
@@ -25,4 +26,5 @@ export type UnlockObjectParams = __Infer<typeof UnlockObjectReducer>;
 export type UpdateCursorParams = __Infer<typeof UpdateCursorReducer>;
 export type UpdateObjectColorParams = __Infer<typeof UpdateObjectColorReducer>;
 export type UpdateObjectTransformParams = __Infer<typeof UpdateObjectTransformReducer>;
+export type UpdateViewerParams = __Infer<typeof UpdateViewerReducer>;
 

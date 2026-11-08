@@ -1,4 +1,4 @@
-# CoScene
+# Collab3D
 
 A multiplayer version of the [three.js editor](https://threejs.org/editor/): everyone who opens the same URL edits one shared 3D scene in real time. SpacetimeDB is the entire backend; three.js only draws what's in the database.
 

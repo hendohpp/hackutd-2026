@@ -51,7 +51,12 @@ function serveThreeRuntimeFiles() {
 			const outDir = path.join( clientDir, 'dist' );
 			if ( ! fs.existsSync( outDir ) ) return;
 
-			const copy = ( from, to ) => fs.cpSync( from, path.join( outDir, to ), { recursive: true } );
+			// Skips folders that don't exist (e.g. editor/examples was removed from the repo).
+			const copy = ( from, to ) => {
+
+				if ( fs.existsSync( from ) ) fs.cpSync( from, path.join( outDir, to ), { recursive: true } );
+
+			};
 
 			// three.js runtime files (see RUNTIME_DIRS above)
 			copy( path.join( threeDir, 'build' ), 'build' );
@@ -62,7 +67,7 @@ function serveThreeRuntimeFiles() {
 			// plus js/libs/app.js and js/libs/app/index.html, which File > Publish fetches as text.
 			copy( path.join( clientDir, 'editor/js/libs' ), 'js/libs' );
 
-			// Example scenes for File > New (fetched from examples/*.app.json).
+			// Example scenes for File > New (fetched from examples/*.app.json), if the folder is present.
 			copy( path.join( clientDir, 'editor/examples' ), 'examples' );
 
 			// Toolbar icons (Toolbar.js sets images/translate.svg etc. as <img> src at runtime).
