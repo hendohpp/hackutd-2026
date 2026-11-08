@@ -108,9 +108,8 @@ function SidebarSettingsShortcuts( editor ) {
 
 			case 'delete': {
 
-				// #SPACETIME Delete / Backspace key: call delete_object( id ) for each selected synced object
-
-				const objects = editor.selector.selection;
+				// #SPACETIME synced objects are deleted through delete_object; only the rest is deleted locally
+				const objects = editor.multiplayer ? editor.multiplayer.deleteObjects( editor.selector.selection ) : editor.selector.selection;
 
 				const commands = [];
 
@@ -203,7 +202,8 @@ function SidebarSettingsShortcuts( editor ) {
 
 			case config.getKey( 'settings/shortcuts/undo' ):
 
-				// #SPACETIME (Phase 5) disable the Ctrl+Z / Ctrl+Shift+Z shortcut
+				// #SPACETIME undo / redo is disabled: local history can't undo through the database
+				if ( editor.multiplayer ) break;
 
 				if ( IS_MAC ? event.metaKey : event.ctrlKey ) {
 

@@ -27,7 +27,7 @@ function SidebarMaterialColorProperty( editor, property, name ) {
 
 	function onChange() {
 
-		// #SPACETIME update_color( id, '#rrggbb' ): replaces SetMaterialColorCommand when property === 'color' on a synced object
+		// #SPACETIME synced: SetMaterialColorCommand dispatches materialChanged, which editor.multiplayer sends (update_object_color)
 
 		if ( material[ property ].getHex() !== color.getHexValue() ) {
 

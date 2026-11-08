@@ -1,0 +1,224 @@
+/* CoScene multiplayer UI: connection badge, who's here, toasts. Follows the editor's light/dark theme. */
+
+.coscene-panel {
+	--panel-bg: rgba( 255, 255, 255, 0.92 );
+	--panel-fg: #333;
+	--panel-muted: #777;
+	--panel-border: rgba( 0, 0, 0, 0.12 );
+
+	position: absolute;
+	top: 46px;
+	left: 10px;
+	/* Same layer as the editor's menu dropdowns (#menubar .menu .options, z-index 1). The panel is added to the
+	   page before the menubar, so open menus draw on top of it; it still sits above the viewport. */
+	z-index: 1;
+	min-width: 150px;
+	max-width: 240px;
+	padding: 8px 10px;
+	border: 1px solid var( --panel-border );
+	border-radius: 8px;
+	background: var( --panel-bg );
+	color: var( --panel-fg );
+	font-family: Helvetica, Arial, sans-serif;
+	font-size: 12px;
+	line-height: 1.4;
+	pointer-events: none;
+}
+
+@media ( prefers-color-scheme: dark ) {
+
+	.coscene-panel {
+		--panel-bg: rgba( 34, 34, 34, 0.92 );
+		--panel-fg: #ddd;
+		--panel-muted: #999;
+		--panel-border: rgba( 255, 255, 255, 0.12 );
+	}
+
+}
+
+.coscene-badge {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: bold;
+}
+
+.coscene-badge .dot,
+.coscene-people .dot {
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex: none;
+}
+
+.coscene-badge .dot { background: #f5a623; }
+.coscene-badge[data-status="live"] .dot { background: #2ecc71; }
+.coscene-badge[data-status="offline"] .dot { background: #e74c3c; }
+
+.coscene-people {
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px solid var( --panel-border );
+}
+
+.coscene-people:empty { display: none; }
+
+.coscene-people .person {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var( --panel-muted );
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* my own row: click to change your name */
+.coscene-people .person.me {
+	color: var( --panel-fg );
+	cursor: pointer;
+	pointer-events: auto;
+}
+
+.coscene-people .person.me .edit {
+	margin-left: auto;
+	padding-left: 8px;
+	font-size: 11px;
+	color: var( --panel-muted );
+	text-decoration: underline;
+}
+
+.coscene-people .person.me:hover .edit { color: var( --panel-fg ); }
+
+/* sign in / sign out row (only shown once a SpacetimeAuth client ID is configured) */
+.coscene-account {
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px solid var( --panel-border );
+	color: var( --panel-muted );
+	font-size: 11px;
+}
+
+.coscene-account[hidden] { display: none; }
+
+.coscene-account button.link,
+.coscene-dialog button.link {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-decoration: underline;
+	cursor: pointer;
+	pointer-events: auto; /* the panel itself lets clicks through to the viewport */
+}
+
+.coscene-account button.link { color: var( --panel-fg ); font-weight: bold; }
+.coscene-dialog button.link { color: var( --dialog-accent ); }
+.coscene-dialog .sign-in { font-size: 12px; }
+.coscene-dialog .sign-in[hidden] { display: none; }
+
+/* name dialog */
+.coscene-dialog-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 150;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 16px;
+	background: rgba( 0, 0, 0, 0.35 );
+}
+
+.coscene-dialog {
+	--dialog-bg: #ffffff;
+	--dialog-fg: #333;
+	--dialog-muted: #666;
+	--dialog-border: rgba( 0, 0, 0, 0.18 );
+	--dialog-accent: #0088ff;
+
+	width: min( 340px, 100% );
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 18px;
+	border-radius: 10px;
+	background: var( --dialog-bg );
+	color: var( --dialog-fg );
+	font-family: Helvetica, Arial, sans-serif;
+	box-shadow: 0 12px 32px rgba( 0, 0, 0, 0.25 );
+}
+
+@media ( prefers-color-scheme: dark ) {
+
+	.coscene-dialog {
+		--dialog-bg: #222;
+		--dialog-fg: #eee;
+		--dialog-muted: #aaa;
+		--dialog-border: rgba( 255, 255, 255, 0.18 );
+	}
+
+}
+
+.coscene-dialog h2 { margin: 0; font-size: 16px; }
+.coscene-dialog p { margin: 0; font-size: 13px; line-height: 1.4; color: var( --dialog-muted ); }
+
+.coscene-dialog input {
+	font: inherit;
+	font-size: 15px;
+	padding: 8px 10px;
+	border: 1px solid var( --dialog-border );
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+}
+
+.coscene-dialog input:focus { outline: 2px solid var( --dialog-accent ); outline-offset: 1px; }
+
+.coscene-dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+.coscene-dialog button {
+	font: inherit;
+	font-size: 13px;
+	padding: 7px 14px;
+	border: 1px solid var( --dialog-border );
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.coscene-dialog button[type="submit"] {
+	border-color: var( --dialog-accent );
+	background: var( --dialog-accent );
+	color: #fff;
+}
+
+.coscene-dialog button:focus-visible { outline: 2px solid var( --dialog-accent ); outline-offset: 2px; }
+
+.coscene-toasts {
+	position: fixed;
+	left: 50%;
+	bottom: 24px;
+	z-index: 100;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	transform: translateX( -50% );
+	pointer-events: none;
+}
+
+.coscene-toast {
+	max-width: min( 90vw, 420px );
+	padding: 8px 14px;
+	border-radius: 6px;
+	background: rgba( 30, 30, 30, 0.92 );
+	color: #fff;
+	font-family: Helvetica, Arial, sans-serif;
+	font-size: 13px;
+	transition: opacity 0.4s;
+}
+
+.coscene-toast.hide { opacity: 0; }

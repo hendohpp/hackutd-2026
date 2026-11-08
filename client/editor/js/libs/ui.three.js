@@ -452,6 +452,9 @@ class UIOutliner extends UIDiv {
 
 		function moveObject( object, newParent, nextObject ) {
 
+			// #SPACETIME parenting and order aren't stored in the database, so outliner drag & drop is disabled
+			if ( scope.editor.multiplayer ) return;
+
 			if ( nextObject === null ) nextObject = undefined;
 
 			let newParentIsChild = false;
@@ -466,7 +469,6 @@ class UIOutliner extends UIDiv {
 
 			const editor = scope.editor;
 			editor.execute( new MoveObjectCommand( editor, object, newParent, nextObject ) );
-			// #SPACETIME (Phase 5) reparenting isn't in the schema: disable outliner drag & drop for synced objects
 
 			const changeEvent = new Event( 'change', { bubbles: true, cancelable: true } );
 			scope.dom.dispatchEvent( changeEvent );

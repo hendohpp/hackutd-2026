@@ -41,7 +41,7 @@ function SidebarObject( editor ) {
 	} );
 	objectActions.onChange( function ( event ) {
 
-		// #SPACETIME Reset Position / Rotation / Scale also have to go through update_transform
+		// #SPACETIME synced: these Set*Commands dispatch objectChanged, which editor.multiplayer sends
 
 		let object = editor.selected;
 
@@ -433,7 +433,7 @@ function SidebarObject( editor ) {
 
 		const object = editor.selected;
 
-		// #SPACETIME update_transform( id, px..sz ): replaces the Set*Command calls below for synced objects
+		// #SPACETIME synced: Set*Command / SetColorCommand dispatch objectChanged, which editor.multiplayer sends
 
 		if ( object !== null ) {
 
