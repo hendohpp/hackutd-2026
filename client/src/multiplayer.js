@@ -8,7 +8,7 @@ import './multiplayer.css';
 // Override with VITE_SPACETIME_URI / VITE_SPACETIME_DB (see client/.env.example).
 
 const URI = import.meta.env.VITE_SPACETIME_URI || ( import.meta.env.PROD ? 'wss://maincloud.spacetimedb.com' : 'ws://localhost:3000' );
-const DB_NAME = import.meta.env.VITE_SPACETIME_DB || ( import.meta.env.PROD ? 'collab3d-hackutd' : 'collab3d' );
+const DB_NAME = import.meta.env.VITE_SPACETIME_DB || ( import.meta.env.PROD ? 'collab3d' : 'collab3d' );
 
 // Everyone on the same link edits the same scene: ?scene=N, default 1.
 const sceneParam = new URLSearchParams( location.search ).get( 'scene' );
