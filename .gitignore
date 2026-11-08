@@ -1,24 +1,50 @@
-# dependencies
-node_modules/
-
-# build output
-dist/
-client/dist/
-
-# spacetime build artifacts
-server/target/
-server/dist/
-
-# env files (keep the example)
+# Development environment and secrets
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+id_rsa*
+credentials.json
+service-account*.json
+*.tfstate*
 
-# logs / misc
+# Claude
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Spacetime & Backend
+.spacetime/
+spacetimedb/target/
+spacetimedb/node_modules/
+server/target/
+server/dist/
+
+# Frontend & Dependencies
+node_modules/
+dist/
+client/dist/
+build/
+.next/
+.vite/
+coverage/
+
+# Rust
+target/
+
+# Database
+*.sqlite
+*.db
+
+# Logs & Debugging
 *.log
 npm-debug.log*
-.vite/
+
+# OS and Editor
 .DS_Store
 Thumbs.db
+.idea/
 .vscode/*
+!.vscode/settings.json
 !.vscode/extensions.json
