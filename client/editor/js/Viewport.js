@@ -22,6 +22,7 @@ import { ColorEnvironment } from 'three/addons/environments/ColorEnvironment.js'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { ViewportPathtracer } from './Viewport.Pathtracer.js';
 import { ViewportSky } from '../../src/sky.js'; // #SPACETIME sky, ground and daylight for the default look
+import { segmentedGrid } from '../../src/grid.js'; // #SPACETIME a 200 m grid that draws from inside it too
 
 function Viewport( editor ) {
 
@@ -53,12 +54,12 @@ function Viewport( editor ) {
 
 	const grid = new THREE.Group();
 
-	const grid1 = new THREE.GridHelper( 200, 200 ); // #SPACETIME 200 m (was 30), for bigger builds
+	const grid1 = segmentedGrid( 200, 200 ); // #SPACETIME 200 m (was a 30 m GridHelper), for bigger builds
 	grid1.material.color.setHex( GRID_COLORS_LIGHT[ 0 ] );
 	grid1.material.vertexColors = false;
 	grid.add( grid1 );
 
-	const grid2 = new THREE.GridHelper( 200, 40 ); // #SPACETIME every 5 m, as before
+	const grid2 = segmentedGrid( 200, 40 ); // #SPACETIME every 5 m, as before
 	grid2.material.color.setHex( GRID_COLORS_LIGHT[ 1 ] );
 	grid2.material.vertexColors = false;
 	grid.add( grid2 );
