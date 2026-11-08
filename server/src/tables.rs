@@ -56,6 +56,19 @@ pub struct Presence {
     pub updated_at: Timestamp,
 }
 
+/// Each connected person's camera, so everyone can see where the others are looking.
+/// Written by update_viewer (several times a second while the camera moves), deleted on disconnect.
+#[spacetimedb::table(accessor = viewer, public)]
+pub struct Viewer {
+    #[primary_key]
+    pub identity: Identity,
+    #[index(btree)]
+    pub scene_id: u64,
+    pub position: Vec3,
+    pub rotation: Vec3, // camera Euler angles, XYZ order, radians
+    pub updated_at: Timestamp,
+}
+
 #[spacetimedb::table(accessor = lock_expiry, scheduled(expire_lock))]
 pub struct LockExpiry {
     #[primary_key]

@@ -43,6 +43,7 @@ import UnlockObjectReducer from "./unlock_object_reducer";
 import UpdateCursorReducer from "./update_cursor_reducer";
 import UpdateObjectColorReducer from "./update_object_color_reducer";
 import UpdateObjectTransformReducer from "./update_object_transform_reducer";
+import UpdateViewerReducer from "./update_viewer_reducer";
 
 // Import all procedure arg schemas
 
@@ -52,6 +53,7 @@ import PresenceRow from "./presence_table";
 import SceneRow from "./scene_table";
 import SceneMemberRow from "./scene_member_table";
 import UserRow from "./user_table";
+import ViewerRow from "./viewer_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -118,6 +120,20 @@ const tablesSchema = __schema({
       { name: 'user_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, UserRow),
+  viewer: __table({
+    name: 'viewer',
+    indexes: [
+      { accessor: 'identity', name: 'viewer_identity_idx_btree', algorithm: 'btree', columns: [
+        'identity',
+      ] },
+      { accessor: 'scene_id', name: 'viewer_scene_id_idx_btree', algorithm: 'btree', columns: [
+        'sceneId',
+      ] },
+    ],
+    constraints: [
+      { name: 'viewer_identity_key', constraint: 'unique', columns: ['identity'] },
+    ],
+  }, ViewerRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
@@ -131,6 +147,7 @@ const reducersSchema = __reducers(
   __reducerSchema("update_cursor", UpdateCursorReducer),
   __reducerSchema("update_object_color", UpdateObjectColorReducer),
   __reducerSchema("update_object_transform", UpdateObjectTransformReducer),
+  __reducerSchema("update_viewer", UpdateViewerReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

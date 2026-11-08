@@ -8,6 +8,8 @@
 //     sync without changes to those files.
 //   - Selecting an object locks it (lock_object); deselecting unlocks it. Objects locked by someone else
 //     get an outline + name label in that user's color and can't be selected.
+//   - Everyone's camera is shared (viewer table): other people appear as small cameras in their color,
+//     with their name and a dashed line to what they're looking at.
 //
 // The editor calls into this file through editor.multiplayer. Search the editor for "#SPACETIME".
 
@@ -32,6 +34,9 @@ const TOKEN_KEY = `${URI}/${DB_NAME}/auth_token`;
 const SEND_INTERVAL = 66; // ms between updates while dragging or scrubbing a color (~15 per second)
 const LOCK_RENEW_INTERVAL = 10_000; // the server expires locks after 30 s
 const PRESENCE_INTERVAL = 1_000;
+const VIEWER_INTERVAL = 100; // ms between camera updates while your camera moves (~10 per second)
+const VIEWER_HIDE_DISTANCE = 0.75; // hide someone whose camera is right where yours is (everyone starts at the same spot)
+const GAZE_LENGTH = 4; // length of the gaze line when it doesn't hit anything
 const EPSILON = 1e-4;
 
 // The kinds the database knows, built exactly like the editor's Add menu builds them.
@@ -60,6 +65,8 @@ class Multiplayer {
 		this.applying = 0; // > 0 while applying database rows: ignore the editor signals they cause
 		this.selectedIds = new Set(); // synced objects in my selection (I hold, or am acquiring, their locks)
 		this.pendingAdds = 0;
+		this.viewers = new Map(); // identity hex -> camera marker for someone else's view
+		this.lastViewerSent = 0;
 
 		// Floating panel (top-left of the viewport): connection badge + who's here.
 		this.badge = createElement( 'div', 'coscene-badge', '<span class="dot"></span><span class="text">Connecting…</span>' );
@@ -163,6 +170,16 @@ class Multiplayer {
 				tables.user,
 			] );
 
+		db.viewer.onInsert( ( _ctx, row ) => this.applyViewer( row ) );
+		db.viewer.onUpdate( ( _ctx, _oldRow, row ) => this.applyViewer( row ) );
+		db.viewer.onDelete( ( _ctx, row ) => this.removeViewer( row.identity.toHexString() ) );
+
+		// Cameras have their own subscription, so a server without the viewer table can't break the scene.
+		this.conn.subscriptionBuilder()
+			.onApplied( () => this.syncViewers() )
+			.onError( ( _ctx, error ) => console.warn( '[coscene] other people\'s cameras are unavailable:', error ) )
+			.subscribe( [ tables.viewer.where( ( r ) => r.sceneId.eq( SCENE_ID ) ) ] );
+
 		if ( this.renewTimer === undefined ) this.renewTimer = setInterval( () => this.renewLocks(), LOCK_RENEW_INTERVAL );
 
 	}
@@ -181,6 +198,7 @@ class Multiplayer {
 		}
 
 		this.sendPresence( true );
+		this.sendViewer( true );
 
 		// After a reconnect the server has released our locks: take them again.
 		for ( const id of this.selectedIds ) this.acquire( id );
@@ -268,6 +286,9 @@ class Multiplayer {
 
 			if ( this.updateLockVisual( s ) ) changed = true;
 
+			// Objects moved: gaze lines may now hit something else.
+			if ( changed && this.viewers.size > 0 ) this.refreshGazes();
+
 			// Only signal real changes: echoes of my own edits must not touch the editor mid-drag
 			// (objectChanged re-anchors a multi-selection's pivot).
 			if ( changed || colorChanged ) this.editor.signals.objectChanged.dispatch( object ); // re-render, refresh sidebar and helpers
@@ -306,6 +327,13 @@ class Multiplayer {
 		} finally {
 
 			this.applying --;
+
+		}
+
+		if ( this.viewers.size > 0 ) {
+
+			this.refreshGazes();
+			this.requestRender();
 
 		}
 
@@ -369,6 +397,9 @@ class Multiplayer {
 
 			}
 
+			// My own edits move objects too: keep other people's gaze lines on target.
+			if ( this.viewers.size > 0 ) this.refreshGazes();
+
 		} );
 
 		// Material color picker.
@@ -383,7 +414,17 @@ class Multiplayer {
 
 		signals.objectSelected.add( () => this.onSelectionChanged() );
 
-		signals.cameraChanged.add( () => this.sendPresence() );
+		// My camera moved: tell the others, and re-check which markers sit right at my eye.
+		// (Runs before the viewport's own cameraChanged render, so the frame shows the result.)
+		signals.cameraChanged.add( () => {
+
+			this.sendPresence();
+			this.sendViewer();
+			for ( const v of this.viewers.values() ) this.placeViewer( v );
+
+		} );
+
+		signals.viewportCameraChanged.add( () => this.sendViewer() );
 
 	}
 
@@ -877,6 +918,280 @@ class Multiplayer {
 
 		}
 
+		this.refreshViewerStyles();
+
+	}
+
+	// -------------------------------------------------------------------------------------------
+	// Cameras: everyone sees where the others are looking (viewer table).
+
+	// Send my camera's position and rotation, at most every VIEWER_INTERVAL ms.
+	sendViewer( now = false ) {
+
+		if ( this.connected === false ) return;
+
+		if ( now === false ) {
+
+			if ( this.viewerTimer ) return;
+
+			const wait = Math.max( 0, VIEWER_INTERVAL - ( performance.now() - this.lastViewerSent ) );
+			this.viewerTimer = setTimeout( () => {
+
+				this.viewerTimer = null;
+				this.sendViewer( true );
+
+			}, wait );
+			return;
+
+		}
+
+		this.lastViewerSent = performance.now();
+
+		const camera = this.editor.viewportCamera || this.editor.camera;
+		camera.updateMatrixWorld();
+		const p = camera.getWorldPosition( _position );
+		const r = _euler.setFromQuaternion( camera.getWorldQuaternion( _quaternion ) );
+
+		this.conn.reducers.updateViewer( {
+			sceneId: SCENE_ID,
+			position: { x: p.x, y: p.y, z: p.z },
+			rotation: { x: r.x, y: r.y, z: r.z },
+		} ).catch( () => {} ); // a server without update_viewer: cameras just don't show
+
+	}
+
+	applyViewer( row ) {
+
+		const hex = row.identity.toHexString();
+		if ( hex === this.identity || row.sceneId !== SCENE_ID ) return; // never draw my own camera
+
+		let v = this.viewers.get( hex );
+
+		if ( v === undefined ) {
+
+			v = this.createViewer( hex );
+			v.group.position.set( row.position.x, row.position.y, row.position.z );
+			v.group.rotation.set( row.rotation.x, row.rotation.y, row.rotation.z );
+
+		}
+
+		v.targetPosition.set( row.position.x, row.position.y, row.position.z );
+		v.targetQuaternion.setFromEuler( _euler.set( row.rotation.x, row.rotation.y, row.rotation.z ) );
+		this.animateViewers();
+
+	}
+
+	createViewer( hex ) {
+
+		const name = this.userName( hex );
+		const color = this.userColor( hex );
+		const marker = makeCameraMarker( color );
+		const label = makeLabel( name, color );
+		const gaze = makeGaze( color );
+
+		this.editor.sceneHelpers.add( marker, label, gaze.line, gaze.dot );
+
+		const v = { hex, name, color, group: marker, label, line: gaze.line, dot: gaze.dot, targetPosition: new THREE.Vector3(), targetQuaternion: new THREE.Quaternion() };
+		this.viewers.set( hex, v );
+		return v;
+
+	}
+
+	removeViewer( hex ) {
+
+		const v = this.viewers.get( hex );
+		if ( v === undefined ) return;
+
+		this.viewers.delete( hex );
+		this.disposeViewer( v );
+		this.requestRender( v.group );
+
+	}
+
+	disposeViewer( v ) {
+
+		this.editor.sceneHelpers.remove( v.group, v.label, v.line, v.dot );
+
+		v.group.traverse( ( child ) => {
+
+			child.geometry?.dispose();
+			child.material?.dispose();
+
+		} );
+		v.label.material.map.dispose(); // (sprites share one geometry: don't dispose it)
+		v.label.material.dispose();
+		v.line.geometry.dispose();
+		v.line.material.dispose();
+		v.dot.geometry.dispose();
+		v.dot.material.dispose();
+
+	}
+
+	// Subscription (re)applied: match the cache exactly.
+	syncViewers() {
+
+		const live = new Set();
+
+		for ( const row of this.conn.db.viewer.iter() ) {
+
+			live.add( row.identity.toHexString() );
+			this.applyViewer( row );
+
+		}
+
+		for ( const hex of [ ...this.viewers.keys() ] ) {
+
+			if ( live.has( hex ) === false ) this.removeViewer( hex );
+
+		}
+
+	}
+
+	// Updates arrive ~10 times a second; glide each marker toward its latest pose in between.
+	animateViewers() {
+
+		if ( this.viewerFrame ) return;
+
+		const step = () => {
+
+			this.viewerFrame = null;
+			let moving = false;
+
+			for ( const v of this.viewers.values() ) {
+
+				const g = v.group;
+				const settled = g.position.distanceToSquared( v.targetPosition ) < 1e-6 && 1 - Math.abs( g.quaternion.dot( v.targetQuaternion ) ) < 1e-7;
+
+				if ( settled ) {
+
+					g.position.copy( v.targetPosition );
+					g.quaternion.copy( v.targetQuaternion );
+
+				} else {
+
+					g.position.lerp( v.targetPosition, 0.3 );
+					g.quaternion.slerp( v.targetQuaternion, 0.3 );
+					moving = true;
+
+				}
+
+				this.placeViewer( v );
+
+			}
+
+			this.requestRender();
+			if ( moving ) this.viewerFrame = requestAnimationFrame( step );
+
+		};
+
+		this.viewerFrame = requestAnimationFrame( step );
+
+	}
+
+	// Position the label and gaze line, and hide a marker that sits right at my own eye.
+	placeViewer( v ) {
+
+		const eye = ( this.editor.viewportCamera || this.editor.camera ).getWorldPosition( _position );
+		const distance = v.group.position.distanceTo( eye );
+		const visible = distance > VIEWER_HIDE_DISTANCE;
+
+		// Grow with distance so a far-away camera stays about the same size on screen.
+		const scale = THREE.MathUtils.clamp( distance * 0.15, 0.6, 6 );
+
+		v.group.visible = visible;
+		v.label.visible = visible;
+		v.line.visible = visible;
+		v.group.scale.setScalar( scale );
+		v.group.updateMatrixWorld();
+		v.label.position.copy( v.group.position ).add( _offset.set( 0, 0.32 * scale, 0 ) );
+
+		this.updateGaze( v );
+
+	}
+
+	// Dashed line along the view direction, ending on the first synced object it hits.
+	updateGaze( v ) {
+
+		const origin = v.group.position;
+		const direction = _direction.set( 0, 0, - 1 ).applyQuaternion( v.group.quaternion );
+
+		const targets = [];
+
+		for ( const s of this.byId.values() ) {
+
+			if ( s.object.isMesh ) {
+
+				s.object.updateMatrixWorld();
+				targets.push( s.object );
+
+			}
+
+		}
+
+		_raycaster.set( origin, direction );
+		const hit = _raycaster.intersectObjects( targets, false )[ 0 ];
+		const end = hit ? hit.point : _end.copy( direction ).multiplyScalar( GAZE_LENGTH ).add( origin );
+
+		const positions = v.line.geometry.attributes.position;
+		positions.setXYZ( 0, origin.x, origin.y, origin.z );
+		positions.setXYZ( 1, end.x, end.y, end.z );
+		positions.needsUpdate = true;
+		v.line.computeLineDistances();
+
+		v.dot.position.copy( end );
+		v.dot.visible = v.group.visible && hit !== undefined;
+
+	}
+
+	refreshGazes() {
+
+		for ( const v of this.viewers.values() ) this.updateGaze( v );
+
+	}
+
+	// A name or color changed (user table): rebuild those markers in place.
+	refreshViewerStyles() {
+
+		let changed = false;
+
+		for ( const v of [ ...this.viewers.values() ] ) {
+
+			if ( v.name === this.userName( v.hex ) && v.color === this.userColor( v.hex ) ) continue;
+
+			const fresh = this.createViewer( v.hex ); // replaces v in the map
+			fresh.group.position.copy( v.group.position );
+			fresh.group.quaternion.copy( v.group.quaternion );
+			fresh.targetPosition.copy( v.targetPosition );
+			fresh.targetQuaternion.copy( v.targetQuaternion );
+
+			this.disposeViewer( v );
+			this.placeViewer( fresh );
+			changed = true;
+
+		}
+
+		if ( changed ) this.requestRender();
+
+	}
+
+	// The viewport renders on editor signals; objectChanged on a marker re-renders without side effects.
+	requestRender( object ) {
+
+		const target = object || this.viewers.values().next().value?.group;
+		if ( target === undefined ) return;
+
+		this.applying ++;
+
+		try {
+
+			this.editor.signals.objectChanged.dispatch( target );
+
+		} finally {
+
+			this.applying --;
+
+		}
+
 	}
 
 	toast( message ) {
@@ -896,6 +1211,63 @@ class Multiplayer {
 
 const ZERO = { x: 0, y: 0, z: 0 };
 const ONE = { x: 1, y: 1, z: 1 };
+
+// scratch objects for camera markers
+const _position = new THREE.Vector3();
+const _direction = new THREE.Vector3();
+const _end = new THREE.Vector3();
+const _offset = new THREE.Vector3();
+const _quaternion = new THREE.Quaternion();
+const _euler = new THREE.Euler();
+const _raycaster = new THREE.Raycaster();
+
+// A small camera in the person's color. Like a three.js camera it looks down its local -Z axis:
+// body behind, lens in front, and a wireframe view frustum pointing where they look.
+function makeCameraMarker( color ) {
+
+	const group = new THREE.Group();
+	const solid = new THREE.MeshBasicMaterial( { color } );
+
+	const body = new THREE.Mesh( new THREE.BoxGeometry( 0.36, 0.26, 0.3 ), solid );
+	body.position.z = 0.15;
+
+	const lens = new THREE.Mesh( new THREE.CylinderGeometry( 0.08, 0.12, 0.14, 20 ), solid );
+	lens.rotation.x = Math.PI / 2; // cylinder axis Y -> Z; the wider end faces forward
+	lens.position.z = - 0.07;
+
+	const depth = 0.75;
+	const halfWidth = 0.4;
+	const halfHeight = 0.225; // 16:9
+	const corners = [ [ - 1, 1 ], [ 1, 1 ], [ 1, - 1 ], [ - 1, - 1 ] ].map( ( [ x, y ] ) => new THREE.Vector3( x * halfWidth, y * halfHeight, - depth ) );
+	const apex = new THREE.Vector3( 0, 0, - 0.14 );
+	const points = [];
+
+	for ( let i = 0; i < 4; i ++ ) points.push( apex, corners[ i ], corners[ i ], corners[ ( i + 1 ) % 4 ] );
+
+	const frustum = new THREE.LineSegments(
+		new THREE.BufferGeometry().setFromPoints( points ),
+		new THREE.LineBasicMaterial( { color, transparent: true, opacity: 0.8 } )
+	);
+
+	group.add( body, lens, frustum );
+	return group;
+
+}
+
+// Dashed gaze line (two points, updated in place) and a dot where it hits an object.
+function makeGaze( color ) {
+
+	const geometry = new THREE.BufferGeometry();
+	geometry.setAttribute( 'position', new THREE.Float32BufferAttribute( new Float32Array( 6 ), 3 ) );
+
+	const line = new THREE.Line( geometry, new THREE.LineDashedMaterial( { color, dashSize: 0.18, gapSize: 0.12, transparent: true, opacity: 0.85 } ) );
+	line.frustumCulled = false; // its bounds change every update
+
+	const dot = new THREE.Mesh( new THREE.SphereGeometry( 0.06, 16, 8 ), new THREE.MeshBasicMaterial( { color } ) );
+
+	return { line, dot };
+
+}
 
 function mesh( name, geometry ) {
 
