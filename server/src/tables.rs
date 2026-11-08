@@ -27,7 +27,19 @@ pub struct SceneMember {
     pub id: u64,
     #[index(btree)]
     pub scene_id: u64,
+    #[index(btree)] // the my_servers view starts from "my memberships"
     pub identity: Identity,
+}
+
+/// A server's invite code (servers are scenes; see reducers/scenes.rs). Private: members read their
+/// servers' codes through the my_servers view, so nobody outside a server can look its code up.
+/// Scenes without a code (like the shared scene 1) are open to everyone.
+#[spacetimedb::table(accessor = scene_invite)]
+pub struct SceneInvite {
+    #[primary_key]
+    pub scene_id: u64,
+    #[unique]
+    pub code: String,
 }
 
 #[spacetimedb::table(accessor = object, public)]
