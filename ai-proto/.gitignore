@@ -1,2 +1,5 @@
 # Rust build output for this test program
 target/
+
+# last build, saved for viewing in the editor
+scene.json

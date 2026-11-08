@@ -108,7 +108,85 @@ Rules:
     let parsed: Value = serde_json::from_str(&text)
         .unwrap_or_else(|_| fail(&format!("Gemini's text was not valid JSON:\n{text}")));
 
-    println!("{}", json!({ "actions": validate(&parsed["actions"]) }));
+    let actions = validate(&parsed["actions"]);
+    println!("{}", json!({ "actions": actions }));
+
+    // Also save a three.js scene file for previewing the build. It uses the same shapes as
+    // client/src/multiplayer.js, so it looks like what the shared editor will show.
+    // (The multiplayer editor has import turned off, so this is for previews only.)
+    let scene_path = concat!(env!("CARGO_MANIFEST_DIR"), "/scene.json");
+    match std::fs::write(scene_path, to_threejs(user_prompt, &actions).to_string()) {
+        Ok(()) => eprintln!("Saved ai-proto/scene.json (preview)."),
+        Err(e) => eprintln!("Could not save {scene_path}: {e}"),
+    }
+}
+
+// Converts one action (sizes in meters) into the position / rotation / scale an `object` row needs.
+// The client (multiplayer.js KINDS) builds: box 1x1x1, sphere radius 1, cylinder radius 1 height 1,
+// plane 1x1 standing upright. So spheres and cylinders get half scale across, and planes are laid flat.
+// server/src/ai.rs will do exactly this when it inserts rows.
+fn to_row(a: &Value) -> ([f64; 3], [f64; 3], [f64; 3]) {
+    let f = |k: &str| a[k].as_f64().unwrap_or(0.0);
+    let (sx, sy, sz) = (f("sx"), f("sy"), f("sz"));
+    let position = [f("px"), f("py"), f("pz")];
+    match a["kind"].as_str().unwrap_or("box") {
+        "sphere" => (position, [0.0; 3], [sx / 2.0, sy / 2.0, sz / 2.0]),
+        "cylinder" => (position, [0.0; 3], [sx / 2.0, sy, sz / 2.0]),
+        "plane" => (position, [-std::f64::consts::FRAC_PI_2, 0.0, 0.0], [sx, sz, 1.0]),
+        _ => (position, [0.0; 3], [sx, sy, sz]),
+    }
+}
+
+// Turns the actions into a three.js "Object" JSON file, using to_row and the client's shapes.
+// Two lights are included so the colors show up.
+fn to_threejs(prompt: &str, actions: &[Value]) -> Value {
+    let id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let uuid = |name: &str| format!("ai-{id}-{name}");
+
+    let geometries = json!([
+        { "uuid": uuid("box"), "type": "BoxGeometry", "width": 1, "height": 1, "depth": 1 },
+        { "uuid": uuid("sphere"), "type": "SphereGeometry", "radius": 1, "widthSegments": 32, "heightSegments": 16 },
+        { "uuid": uuid("cylinder"), "type": "CylinderGeometry", "radiusTop": 1, "radiusBottom": 1, "height": 1, "radialSegments": 32 },
+        { "uuid": uuid("plane"), "type": "PlaneGeometry", "width": 1, "height": 1 },
+    ]);
+
+    let mut materials = Vec::new();
+    let mut children = vec![
+        json!({ "uuid": uuid("sky"), "type": "HemisphereLight", "name": "AI light (sky)",
+                "color": 0xffffff, "groundColor": 0x444444, "intensity": 2, "position": [0, 10, 0] }),
+        json!({ "uuid": uuid("sun"), "type": "DirectionalLight", "name": "AI light (sun)",
+                "color": 0xffffff, "intensity": 2, "position": [5, 10, 7.5] }),
+    ];
+
+    for (i, a) in actions.iter().enumerate() {
+        let kind = a["kind"].as_str().unwrap_or("box");
+        let hex = a["color"].as_str().unwrap_or(DEFAULT_COLOR);
+        let color = u32::from_str_radix(&hex[1..], 16).unwrap_or(0x888888);
+        let (position, rotation, scale) = to_row(a);
+
+        let material = uuid(&format!("mat{i}"));
+        materials.push(json!({ "uuid": material, "type": "MeshStandardMaterial", "color": color, "side": 2 }));
+        children.push(json!({
+            "uuid": uuid(&format!("obj{i}")),
+            "type": "Mesh",
+            "name": format!("{kind} {}", i + 1),
+            "geometry": uuid(kind),
+            "material": material,
+            "position": position,
+            "rotation": rotation,
+            "scale": scale,
+        }));
+    }
+
+    json!({
+        "metadata": { "version": 4.6, "type": "Object", "generator": "ai-proto" },
+        "geometries": geometries,
+        "materials": materials,
+        "object": { "uuid": uuid("group"), "type": "Group", "name": format!("AI: {prompt}"), "children": children },
+    })
 }
 
 // The model's text lives in steps[] -> { type: "model_output", content: [ { type: "text", text } ] }.
