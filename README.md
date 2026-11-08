@@ -1,74 +1,75 @@
 # Collab3D
 
-A multiplayer version of the [three.js editor](https://threejs.org/editor/): everyone who opens the same URL edits one shared 3D scene in real time. SpacetimeDB is the entire backend; three.js only draws what's in the database.
+A real-time collaborative 3D scene builder built on SpacetimeDB and Three.js. Designed for animators, artists, engineers, and anyone interested in collaborative 3D modeling. Unlike traditional workflow pipelines, every user directly edits a single source of truth in real time; no merge conflicts, no constant uploading and downloading.
 
-**Live:** https://hackutd-2026.vercel.app/ (database `collab3d` on SpacetimeDB Maincloud)
+Live Demo: https://hackutd-2026.vercel.app/ (valid for duration of hack-a-thon)
 
-## How it works
+Database: collab3d on SpacetimeDB Maincloud
 
-- **The database is the truth.** Every object in the shared scene is a row in the `object` table. Each browser subscribes to the rows and builds its three.js scene from them, so everyone sees the same thing, and a refresh restores the scene from the database.
-- **Edits are reducer calls.** Add, move, rotate, scale, recolor and delete call reducers (`create_object`, `update_object_transform`, `update_object_color`, `delete_object`). The change shows up for everyone, including you, when the row comes back.
-- **Selecting locks.** Selecting an object calls `lock_object`. Other people see an outline and your name in your color, and the server rejects their edits until you deselect or close the tab. Locks expire after 30 s if not renewed; the client renews them while you have something selected.
-- **Who's here.** The panel at the top-left shows the connection status and who is in the scene (`presence` table).
+## Architecture (The 5 Pillars)
 
-Synced: Box, Sphere, Cylinder, Plane and Point light; position, rotation, scale and color. Editor features that would change the scene without the database (File → New/Open/Import, Undo/Redo, drag-and-drop import, re-parenting in the outliner) are hidden. Other properties (name, material settings, geometry parameters) are still local-only.
+### Database w/ Spacetime
 
-Everyone on the same link shares scene 1; add `?scene=2` to the URL for a separate scene.
+SpacetimeDB serves as the single source of truth for the application state.
 
-## Run it locally
+* **Object**: Stores geometry, transform (position, rotation, scale), color, and locking metadata.
+* **Scene**, **SceneMember**, **SceneInvite**: Manages multi-scene isolation and private server memberships.
+* **Presence**, **Viewer**: Tracks live user cursors and camera orientations so collaborators see each other move in real time.
+* **LockExpiry**: A scheduled table driving automated lock cleanup (in case of errorneous disconnections).
 
-**You need:** [Node.js](https://nodejs.org/) 20+, git, and for the database part the [SpacetimeDB CLI](https://spacetimedb.com/install) and [Rust](https://rustup.rs) (the server module is Rust).
+### Backend w/ Spacetime Reducers in Rust
+
+All state mutations happen through server-side Rust reducers.
+
+* Reducers guarantee that state transitions are atomic, validated, and broadcasted to all connected clients simultaneously.
+* Selecting an object invokes `lock_object`, granting exclusive edit rights. `expire_lock` handles releasing the lock after a 30 second period (does not affect re-aquired locks).
+
+### Authentication w/ Spacetime
+
+Identity and access are natively handled by SpacetimeDB cryptographically secure Identity tokens.
+
+* Each connected client who authenticates is mapped to a User, storing their identity, name, and cursor color. 
+* Scenes can be made public or private allowing for specific users to be invited.
+
+### Client w/ Three.js
+
+The main UI is a modified version of Three.js to allow for AI prompting and collaboration.
+
+* The client subscribes to the SpacetimeDB object table. Rows map directly to Three.js meshes; changes in the database instantly redraw the scene
+
+### AI Integration w/ Gemini & Claude
+
+Users can select their favourite agent and provide ideas that they want added to the scene.
+
+* AI agents can add custom ideas to the scene, creating many different objects in one request.
+* AI interacts with the reducers, allowing safe updating of system states.
+
+## Quick Start
+
+Prerequisites: `Node.js 20+`, `Git`, `Rust`, `SpacetimeDB CLI`.
 
 ```sh
 git clone git@github.com:hendohpp/hackutd-2026.git
 cd hackutd-2026
 
-# terminal 1: local SpacetimeDB on port 3000
+# Terminal 1: Start local SpacetimeDB node
+cd server
 spacetime start
 
-# terminal 2: publish the module locally, then run the editor
+# Terminal 2: Publish module and run frontend
 spacetime publish collab3d --module-path server --server local
 cd client
 npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** in two windows (each tab is its own user) and edit together. `npm run dev` connects to `ws://localhost:3000`, database `collab3d`; the production build (`npm run build`) connects to Maincloud. Override either with `VITE_SPACETIME_URI` / `VITE_SPACETIME_DB` (see `client/.env.example`).
+Open http://localhost:5173
 
-**After changing the server** (tables or reducers): republish it, then regenerate the client bindings and commit them:
+## Preview
 
-```sh
-spacetime publish collab3d --module-path server --server local    # add --delete-data if the schema change is incompatible
-cd client && npm run generate                                     # rewrites client/src/module_bindings
-```
-
-To update the live database: `spacetime publish collab3d --module-path server --server maincloud` (needs the owner's `spacetime login`).
-
-### Troubleshooting
-
-- **Badge says Offline / Connecting forever**: is `spacetime start` running and the module published as `collab3d`? Check the browser console for the error.
-- **`spacetime call` says "you do not hold an active lock"** right after `lock_object`: expected. Each CLI call is its own short connection, and disconnecting releases your locks. Test locks with two browser windows instead.
-- **`Port 5173 is already in use`**: another dev server is still running. Stop it and run `npm run dev` again.
-- **On WSL, the page won't load in your Windows browser**: run `npm run dev -- --host` and open the `Network:` URL it prints.
-
-## Project layout
-
-```
-client/
-  editor/              the three.js editor (r187), lightly modified; this is the web root
-  src/multiplayer.js   the SpacetimeDB client: connection, rows -> scene, edits -> reducers, locks, presence
-  src/module_bindings/ generated by `spacetime generate` (don't edit)
-  public/              static files the editor expects (favicons, font)
-  vite.config.js
-server/                SpacetimeDB module (Rust): tables.rs, reducers/, lifecycle.rs
-```
-
-Every change to the editor's own files is marked with a `#SPACETIME` comment:
-
-```sh
-grep -rn "#SPACETIME" client/editor
-```
+![Two users working on a scene with a house](docs/images/Preview1.png)
+![SpacetimeDB Tables](docs/design/Schema1.png)
 
 ## Credits
 
-The editor in `client/editor/` is the [three.js editor](https://github.com/mrdoob/three.js/tree/dev/editor) by the three.js authors, released under the MIT License. See [LICENSE-threejs](LICENSE-threejs).
+The editor foundation in `client/editor/` is provided by the Three.js authors under the MIT License.
