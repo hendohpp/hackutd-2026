@@ -41,6 +41,7 @@
 			</div>
 		</main>
 
-		<script type="module" src="../src/site/login.js"></script>
+		<!-- An import, not <script src>: client/src is outside Vite's web root (client/editor), and imports resolve on disk. -->
+		<script type="module">import '../src/site/login.js';</script>
 	</body>
 </html>

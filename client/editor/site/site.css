@@ -243,3 +243,9 @@ dialog .lead { margin: 0.3rem 0 1.25rem; font-size: 0.9rem; color: var(--muted);
 .toasts { position: fixed; right: 1rem; bottom: 1rem; z-index: 100; display: grid; gap: 0.5rem; }
 .toast { max-width: 22rem; padding: 0.7rem 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--secondary); font-size: 0.9rem; box-shadow: 0 8px 24px rgb(0 0 0 / 0.35); }
 .toast-error { border-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+
+/* invite codes (servers page) */
+.code-box-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.server-card-actions { flex-wrap: wrap; }
+.code-chip-open { cursor: default; }
+.code-chip-open:hover { color: var(--muted); }

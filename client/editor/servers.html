@@ -98,7 +98,7 @@
 				<p class="lead">Enter the code someone shared with you.</p>
 				<div class="field">
 					<label for="join-input">Invite code</label>
-					<input id="join-input" class="input input-code" inputmode="numeric" placeholder="12" required>
+					<input id="join-input" class="input input-code" placeholder="K7QM2X" maxlength="12" autocapitalize="characters" autocomplete="off" spellcheck="false" required>
 					<p class="field-error" aria-live="polite"></p>
 				</div>
 				<div class="dialog-actions">
@@ -111,13 +111,16 @@
 		<!-- Created -->
 		<dialog id="created-dialog" aria-labelledby="created-title">
 			<h2 id="created-title">Server created</h2>
-			<p class="lead"><span id="created-name"></span> is ready. Share the invite code so others can join.</p>
+			<p class="lead"><span id="created-name"></span> is ready. Share the invite code or link so others can join.</p>
 			<div class="code-box">
 				<div>
 					<p class="label">Invite code</p>
 					<p id="created-code" class="value"></p>
 				</div>
-				<button id="created-copy" class="btn btn-outline btn-sm" type="button"><i data-icon="copy"></i>Copy</button>
+				<div class="code-box-actions">
+					<button id="created-copy" class="btn btn-outline btn-sm" type="button"><i data-icon="copy"></i>Copy</button>
+					<button id="created-copy-link" class="btn btn-ghost btn-sm" type="button">Copy link</button>
+				</div>
 			</div>
 			<div class="dialog-actions">
 				<button class="btn btn-ghost" type="button" data-close>Close</button>
@@ -125,6 +128,7 @@
 			</div>
 		</dialog>
 
-		<script type="module" src="../src/site/servers.js"></script>
+		<!-- An import, not <script src>: client/src is outside Vite's web root (client/editor), and imports resolve on disk. -->
+		<script type="module">import '../src/site/servers.js';</script>
 	</body>
 </html>

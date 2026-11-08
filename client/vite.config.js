@@ -79,7 +79,7 @@ function serveThreeRuntimeFiles() {
 }
 
 export default defineConfig( {
-	// The editor (editor.html) lives in client/editor, so that folder is the web root (/).
+	// The site's pages and the editor (editor.html) live in client/editor, so that folder is the web root (/).
 	// The editor keeps its relative paths (images/, js/libs/, ../build/) because it stays in that folder.
 	root: path.join( clientDir, 'editor' ),
 	// Static extras the editor expects next to it (favicons, the Text menu's font).
@@ -92,6 +92,9 @@ export default defineConfig( {
 		// Every page of the site. Vite only builds index.html unless the others are listed here.
 		rolldownOptions: {
 			input: {
+				home: path.join( clientDir, 'editor/index.html' ), // landing page; also where SpacetimeAuth sends you back
+				login: path.join( clientDir, 'editor/login.html' ),
+				servers: path.join( clientDir, 'editor/servers.html' ),
 				editor: path.join( clientDir, 'editor/editor.html' ), // the 3D editor (?scene=N)
 			},
 		},

@@ -1,7 +1,7 @@
 // Landing page (/). Also where SpacetimeAuth sends you back after signing in or out, because the
 // registered redirect URL is the site root (see src/auth.js).
 
-import { completeSignIn } from '../auth.js';
+import { completeSignIn, noteSignInFailed } from '../auth.js';
 import { hydrateIcons, hasIdentity, toast, AFTER_SIGN_IN_KEY } from './common.js';
 
 hydrateIcons();
@@ -50,6 +50,8 @@ async function returnFromSignIn() {
 			return;
 
 		}
+
+		noteSignInFailed(); // the editor says so when you get back
 
 	}
 

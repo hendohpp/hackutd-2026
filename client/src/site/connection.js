@@ -4,9 +4,12 @@
 //   - signed in with SpacetimeAuth: the sign-in's token (same identity on every device)
 //   - guest: this tab's token in sessionStorage, under the same key multiplayer.js uses
 // Opening a server goes to editor.html in the same tab, so the editor picks up that identity.
+//
+// It subscribes to my_servers (a per-user view: the servers you belong to, with their invite codes;
+// codes are private to members) and user (names and colors).
 
 import { DbConnection, tables } from '../module_bindings';
-import { forgetSignIn } from '../auth.js';
+import { forgetSignIn, renewedSignInToken } from '../auth.js';
 import { safeSignedInToken, storageGet, storageSet, storageRemove } from './common.js';
 
 // Same database and storage key as src/multiplayer.js. Keep them in sync.
@@ -14,7 +17,7 @@ const URI = import.meta.env.VITE_SPACETIME_URI || ( import.meta.env.PROD ? 'wss:
 const DB_NAME = import.meta.env.VITE_SPACETIME_DB || ( import.meta.env.PROD ? 'coscene-hackutd' : 'coscene' );
 const TOKEN_KEY = `${URI}/${DB_NAME}/auth_token`;
 
-// Connects, subscribes to servers, members and people, then calls onReady( conn, myHexIdentity, signedIn ).
+// Connects, subscribes to your servers and to people, then calls onReady( conn, myHexIdentity, signedIn ).
 // onChange runs whenever any of those rows change; onFail( message ) if the database can't be reached.
 export async function connect( { onReady, onChange, onFail, onNotice } ) {
 
@@ -26,27 +29,26 @@ export async function connect( { onReady, onChange, onFail, onNotice } ) {
 		const signedIn = signInToken !== undefined;
 		const token = signInToken ?? storageGet( sessionStorage, TOKEN_KEY );
 
-		const conn = DbConnection.builder()
+		const builder = DbConnection.builder()
 			.withUri( URI )
 			.withDatabaseName( DB_NAME )
 			.withToken( token )
-			.onConnect( ( conn, identity, newToken ) => {
+			.withAutomaticReconnect()
+			.onConnect( ( _conn, identity, newToken ) => {
 
+				me = identity.toHexString(); // arrives before the subscription does
 				if ( signedIn === false ) storageSet( sessionStorage, TOKEN_KEY, newToken );
 
-				conn.subscriptionBuilder()
-					.onApplied( () => onReady( conn, identity.toHexString(), signedIn ) )
-					.onError( ( _ctx, error ) => onFail( `Couldn't load your servers: ${error.message ?? error}` ) )
-					.subscribe( [ tables.scene, tables.sceneMember, tables.user ] );
-
 			} )
-			.onConnectError( ( _ctx, error ) => {
+			.onConnectError( ( _ctx, error, nextAttempt ) => {
 
 				console.error( '[coscene] connection failed:', error );
 
+				if ( nextAttempt !== undefined ) return; // the SDK is retrying
+
 				if ( signedIn ) {
 
-					// The sign-in was refused (e.g. it expired): continue as a guest.
+					// The sign-in was refused and couldn't be renewed: continue as a guest.
 					signInToken = undefined;
 					onNotice?.( 'Your sign-in expired. You\'re continuing as a guest.' );
 					forgetSignIn().finally( start );
@@ -64,10 +66,35 @@ export async function connect( { onReady, onChange, onFail, onNotice } ) {
 
 				}
 
-			} )
-			.build();
+			} );
 
-		for ( const table of [ conn.db.scene, conn.db.sceneMember, conn.db.user ] ) {
+		// Signed in: reconnects get a renewed token (sign-in tokens last 15 minutes).
+		if ( signedIn ) builder.withTokenProvider( renewedSignInToken );
+
+		const conn = builder.build();
+		let ready = false;
+		let me = null;
+
+		// Register once; the SDK replays the subscription after reconnecting.
+		conn.subscriptionBuilder()
+			.onApplied( () => {
+
+				if ( ready === false ) {
+
+					ready = true;
+					onReady( conn, me, signedIn );
+
+				} else {
+
+					onChange();
+
+				}
+
+			} )
+			.onError( ( _ctx, error ) => onFail( `Couldn't load your servers: ${error?.message ?? error}` ) )
+			.subscribe( [ tables.myServers, tables.user ] );
+
+		for ( const table of [ conn.db.myServers, conn.db.user ] ) {
 
 			table.onInsert( () => onChange() );
 			table.onUpdate?.( () => onChange() );

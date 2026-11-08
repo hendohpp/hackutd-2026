@@ -1,10 +1,11 @@
-// Optional sign-in with SpacetimeAuth (OpenID Connect). Guests can do everything without it; signing in
-// gives you the same identity on every device, and your account's name.
+// Optional sign-in with SpacetimeAuth (OpenID Connect). Guests can join servers and edit without it; signing
+// in lets you create servers, and gives you the same identity on every device, and your account's name.
 //
-// "Sign in" sends you to SpacetimeAuth, which sends you back to this page with ?code=…&state=…. The code
-// is traded for tokens (PKCE, no secret in the page), and the ID token becomes the SpacetimeDB connection
-// token. The server counts it as signed in only if SpacetimeAuth issued it for SPACETIMEAUTH_CLIENT_ID
-// (server/src/auth.rs).
+// "Sign in" sends you to SpacetimeAuth, which sends you back to the site root (the landing page,
+// src/site/landing.js) with ?code=…&state=…. The landing page trades the code for tokens (PKCE, no secret in
+// the page), then sends you on to the editor or your servers. The ID token becomes the SpacetimeDB
+// connection token. The server counts it as signed in only if SpacetimeAuth issued it for
+// SPACETIMEAUTH_CLIENT_ID (server/src/auth.rs).
 
 import { UserManager, WebStorageStateStore } from 'oidc-client-ts';
 
@@ -14,12 +15,15 @@ import { UserManager, WebStorageStateStore } from 'oidc-client-ts';
 const SPACETIMEAUTH_CLIENT_ID = import.meta.env.VITE_SPACETIMEAUTH_CLIENT_ID || 'client_034tqgLZLkX9U3IhumuLUP';
 const AUTHORITY = 'https://auth.spacetimedb.com/oidc';
 
-// SpacetimeAuth sends you back to the page itself. Register these exact URLs on the client, as both
+// SpacetimeAuth sends you back to the landing page. Register these exact URLs on the client, as both
 // Redirect URIs and Post Logout Redirect URIs: http://localhost:5173/ and https://hackutd-2026.vercel.app/
 const REDIRECT_URI = `${location.origin}/`;
 
 // sessionStorage: the ?scene=… you were on, restored after the sign-in round trip
 const RETURN_KEY = 'coscene/sign-in-return';
+
+// sessionStorage: a sign-in started in the editor failed on the landing page (see noteSignInFailed)
+const FAILED_KEY = 'coscene/sign-in-failed';
 
 export const signInAvailable = SPACETIMEAUTH_CLIENT_ID !== '';
 
@@ -35,9 +39,11 @@ function getManager() {
 			redirect_uri: REDIRECT_URI,
 			post_logout_redirect_uri: REDIRECT_URI,
 			response_type: 'code',
-			scope: 'openid profile email',
+			scope: 'openid profile email offline_access',
 			userStore: new WebStorageStateStore( { store: window.localStorage } ), // stay signed in across tabs and visits
-			automaticSilentRenew: false, // when the sign-in expires you continue as a guest and can sign in again
+			// SpacetimeAuth tokens last 15 minutes. offline_access (in the scope above) gives a refresh token, which
+			// renews them quietly while a page is open, and on the next visit (signedInToken).
+			automaticSilentRenew: true,
 		} );
 
 	}
@@ -46,8 +52,9 @@ function getManager() {
 
 }
 
-// Coming back from SpacetimeAuth: put the address back the way it was (e.g. ?scene=2) right away, before
-// multiplayer.js reads ?scene, and keep the callback URL for completeSignIn().
+// Coming back from SpacetimeAuth (on the landing page): put back the address you signed in from (e.g.
+// ?scene=2) right away, and keep the callback URL for completeSignIn(). landing.js then sends you on to
+// editor.html with that ?scene, or to your servers.
 let callbackUrl = null;
 
 {
@@ -85,22 +92,77 @@ export async function completeSignIn() {
 
 }
 
-// The ID token to connect with, or undefined if not signed in. An expired sign-in is dropped.
+// The landing page finishes every sign-in. When one started in the editor fails, it leaves a note here so the
+// editor can say so once you're back (takeSignInFailed).
+export function noteSignInFailed() {
+
+	try {
+
+		sessionStorage.setItem( FAILED_KEY, '1' );
+
+	} catch { /* storage unavailable: no message */ }
+
+}
+
+// True once after noteSignInFailed().
+export function takeSignInFailed() {
+
+	try {
+
+		const failed = sessionStorage.getItem( FAILED_KEY ) !== null;
+		sessionStorage.removeItem( FAILED_KEY );
+		return failed;
+
+	} catch {
+
+		return false;
+
+	}
+
+}
+
+// The ID token to connect with, or undefined if not signed in. An expired one (they last 15 minutes) is
+// renewed with the refresh token, and the sign-in is dropped only if that fails.
 export async function signedInToken() {
 
 	if ( signInAvailable === false ) return undefined;
 
-	const user = await getManager().getUser();
+	const manager = getManager();
+	let user = await manager.getUser();
 	if ( user === null ) return undefined;
 
 	if ( user.expired ) {
 
-		await getManager().removeUser();
-		return undefined;
+		try {
+
+			user = await manager.signinSilent(); // refresh token grant: no page change
+
+		} catch ( error ) {
+
+			console.warn( '[coscene] couldn\'t renew the sign-in:', error );
+			user = null;
+
+		}
+
+		if ( user === null || user.expired ) {
+
+			await manager.removeUser();
+			return undefined;
+
+		}
 
 	}
 
 	return user.id_token;
+
+}
+
+// For the SpacetimeDB SDK's token provider: a current token for the same account when it reconnects.
+export async function renewedSignInToken() {
+
+	const token = await signedInToken();
+	if ( token === undefined ) throw new Error( 'the sign-in has expired' );
+	return token;
 
 }
 

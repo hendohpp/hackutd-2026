@@ -36,6 +36,43 @@
 
 }
 
+/* back to your servers + this server's name */
+.coscene-server {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	margin-bottom: 6px;
+	padding-bottom: 6px;
+	border-bottom: 1px solid var( --panel-border );
+	font-size: 11px;
+	color: var( --panel-muted );
+}
+
+.coscene-server a {
+	color: var( --panel-fg );
+	font-weight: bold;
+	text-decoration: none;
+	white-space: nowrap;
+	pointer-events: auto; /* the panel itself lets clicks through to the viewport */
+}
+
+.coscene-server a:hover { text-decoration: underline; }
+.coscene-server .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* e.g. "You're not a member of this server" */
+.coscene-notice {
+	margin-top: 6px;
+	padding: 6px 8px;
+	border-radius: 6px;
+	background: rgba( 231, 76, 60, 0.12 );
+	color: var( --panel-fg );
+	font-size: 11px;
+	pointer-events: auto;
+}
+
+.coscene-notice[hidden] { display: none; }
+.coscene-notice a { color: inherit; font-weight: bold; }
+
 .coscene-badge {
 	display: flex;
 	align-items: center;
