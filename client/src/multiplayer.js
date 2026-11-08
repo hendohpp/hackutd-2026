@@ -57,6 +57,7 @@ class Multiplayer {
 		this.byId = new Map(); // row id (string) -> sync state { id, object, row, ... }
 		this.byObject = new WeakMap(); // THREE.Object3D -> sync state
 		this.applying = 0; // > 0 while applying database rows: ignore the editor signals they cause
+		this.sceneRefresh = null; // objects added/removed since the editor last heard (see queueSceneRefresh)
 		this.selectedIds = new Set(); // synced objects in my selection (I hold, or am acquiring, their locks)
 		this.pendingAdds = 0;
 		this.viewers = new Map(); // identity hex -> camera marker for someone else's view
@@ -288,6 +289,7 @@ class Multiplayer {
 
 		const id = row.id.toString();
 		let s = this.byId.get( id );
+		const isNew = s === undefined;
 
 		this.applying ++;
 
@@ -295,7 +297,7 @@ class Multiplayer {
 
 			let changed = false;
 
-			if ( s === undefined ) {
+			if ( isNew ) {
 
 				const make = Object.hasOwn( KINDS, row.kind ) ? KINDS[ row.kind ]
 					: ASSET_KIND.test( row.kind ) ? assetKind( row.kind, this.editor ) : unknownKind( row.kind );
@@ -308,7 +310,7 @@ class Multiplayer {
 
 				setTransform( object, row );
 				setColor( object, row.color );
-				this.editor.addObject( object );
+				this.addQuietly( object );
 				changed = true;
 
 			}
@@ -335,13 +337,18 @@ class Multiplayer {
 
 			if ( this.updateLockVisual( s ) ) changed = true;
 
-			// Objects moved: gaze lines may now hit something else.
-			if ( changed && this.viewers.size > 0 ) this.refreshGazes();
+			// New objects: the editor hears about them in queueSceneRefresh's once-per-frame update instead.
+			if ( isNew === false ) {
 
-			// Only signal real changes: echoes of my own edits must not touch the editor mid-drag
-			// (objectChanged re-anchors a multi-selection's pivot).
-			if ( changed || colorChanged ) this.editor.signals.objectChanged.dispatch( object ); // re-render, refresh sidebar and helpers
-			if ( colorChanged && object.material ) this.editor.signals.materialChanged.dispatch( object, 0 );
+				// Objects moved: gaze lines may now hit something else.
+				if ( changed && this.viewers.size > 0 ) this.refreshGazes();
+
+				// Only signal real changes: echoes of my own edits must not touch the editor mid-drag
+				// (objectChanged re-anchors a multi-selection's pivot).
+				if ( changed || colorChanged ) this.editor.signals.objectChanged.dispatch( object ); // re-render, refresh sidebar and helpers
+				if ( colorChanged && object.material ) this.editor.signals.materialChanged.dispatch( object, 0 );
+
+			}
 
 		} finally {
 
@@ -370,7 +377,7 @@ class Multiplayer {
 			if ( selection.includes( s.object ) ) this.editor.selector.setSelection( selection.filter( ( o ) => o !== s.object ) );
 
 			this.removeLockVisual( s );
-			this.editor.removeObject( s.object );
+			this.removeQuietly( s.object );
 			disposeObject( s.object );
 
 		} finally {
@@ -379,9 +386,84 @@ class Multiplayer {
 
 		}
 
-		if ( this.viewers.size > 0 ) {
+	}
 
-			this.refreshGazes();
+	// An AI build arrives as one transaction with up to hundreds of rows. Telling the editor about each
+	// object (editor.addObject / removeObject) redraws the viewport and rebuilds the outliner once per
+	// object, which froze the page for seconds. Rows are added and removed quietly instead, and the
+	// editor hears about them once per frame.
+	addQuietly( object ) {
+
+		const editor = this.editor;
+
+		object.traverse( ( child ) => { // as editor.addObject does
+
+			if ( child.geometry !== undefined ) editor.addGeometry( child.geometry );
+			if ( child.material !== undefined ) editor.addMaterial( child.material );
+			editor.addCamera( child );
+			editor.addHelper( child );
+
+		} );
+		editor.scene.add( object );
+		this.queueSceneRefresh( 'added', object );
+
+	}
+
+	removeQuietly( object ) {
+
+		const editor = this.editor;
+		if ( object.parent === null ) return;
+
+		object.traverse( ( child ) => { // as editor.removeObject does
+
+			editor.removeCamera( child );
+			editor.removeHelper( child );
+			if ( child.material !== undefined ) editor.removeMaterial( child.material );
+
+		} );
+		object.parent.remove( object );
+		this.queueSceneRefresh( 'removed', object );
+
+	}
+
+	// change: 'added' / 'removed' (with the object), or nothing (e.g. a 3D model finished loading).
+	queueSceneRefresh( change, object ) {
+
+		if ( this.sceneRefresh === null ) {
+
+			this.sceneRefresh = { added: null, removed: null };
+			requestAnimationFrame( () => this.flushSceneRefresh() );
+
+		}
+
+		if ( change !== undefined ) this.sceneRefresh[ change ] = object;
+
+	}
+
+	flushSceneRefresh() {
+
+		const { added, removed } = this.sceneRefresh;
+		this.sceneRefresh = null;
+		const signals = this.editor.signals;
+
+		this.applying ++;
+
+		try {
+
+			// Their listeners (object counts, animation list) recount the whole scene, so once each is enough.
+			if ( added !== null ) signals.objectAdded.dispatch( added );
+			if ( removed !== null ) signals.objectRemoved.dispatch( removed );
+			signals.sceneGraphChanged.dispatch(); // outliner + redraw
+
+		} finally {
+
+			this.applying --;
+
+		}
+
+		if ( ( added !== null || removed !== null ) && this.viewers.size > 0 ) {
+
+			this.refreshGazes(); // objects came or went: gaze lines may now hit something else
 			this.requestRender();
 
 		}
@@ -1535,7 +1617,9 @@ function assetKind( kind, editor ) {
 
 			} );
 			group.add( copy );
-			editor.signals.sceneGraphChanged.dispatch(); // redraw, and make the new parts clickable
+			// Redraw, and make the new parts clickable. Once per frame: many copies of one model finish together.
+			if ( editor.multiplayer ) editor.multiplayer.queueSceneRefresh();
+			else editor.signals.sceneGraphChanged.dispatch();
 
 		} ).catch( ( error ) => console.warn( `[coscene] couldn't load model ${path}:`, error ) );
 
