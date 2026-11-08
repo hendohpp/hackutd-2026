@@ -4,17 +4,14 @@
 // procedure (server/src/ai.rs), which asks Gemini and inserts the shapes into the shared `object`
 // table. The new objects then arrive through the normal subscription in multiplayer.js, for
 // everyone, so this file never touches the three.js scene. There is no API key here: the key
-// lives only in the server's private ai_config table.
+// stays on the server.
 //
-// ask_ai is called over SpacetimeDB's HTTP API with this tab's own login token, so the server
-// sees the same user who joined the scene. That way the generated module_bindings don't change.
+// ask_ai runs over the editor's existing SpacetimeDB connection (editor.multiplayer.askAi), so it
+// uses this tab's identity and scene. (A separate HTTP call would count as its own visit, and the
+// server releases a user's locks and presence when a visit ends.)
 //
 // The bubble can be dragged anywhere by its orb or edge; double-click the orb to put it back.
 // Its position is remembered in this browser.
-
-// Same ?scene=N rule as multiplayer.js (default 1).
-const sceneParam = new URLSearchParams( location.search ).get( 'scene' );
-const SCENE_ID = /^\d+$/.test( sceneParam || '' ) ? Number( sceneParam ) : 1;
 
 const DEFAULT_POSITION = { left: 284, top: 46 }; // to the right of the multiplayer panel
 const MIN_TOP = 36; // stay below the editor's menu bar
@@ -58,8 +55,7 @@ panel.addEventListener( 'submit', async ( event ) => {
 	if ( prompt === '' ) return;
 
 	const multiplayer = window.editor && window.editor.multiplayer;
-	const login = multiplayer && multiplayer.connected ? findLogin( multiplayer.conn ) : null;
-	if ( login === null ) return show( 'Not connected to the database yet.', true );
+	if ( ! multiplayer || multiplayer.connected === false ) return show( 'Not connected to the database yet.', true );
 
 	input.disabled = button.disabled = true;
 	panel.classList.add( 'busy' );
@@ -67,35 +63,13 @@ panel.addEventListener( 'submit', async ( event ) => {
 
 	try {
 
-		const response = await fetch( `${login.http}/v1/database/${encodeURIComponent( login.db )}/call/ask_ai`, {
-			method: 'POST',
-			headers: { 'Authorization': `Bearer ${login.token}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify( [ SCENE_ID, prompt ] ),
-		} );
-
-		if ( ! response.ok ) {
-
-			show( `The AI isn't available on this database (HTTP ${response.status}).`, true );
-			return;
-
-		}
-
-		// ask_ai returns Result<u32, String>: [0, count] on success, [1, "message"] on error.
-		const [ tag, value ] = await response.json();
-		if ( tag === 0 ) {
-
-			show( `Added ${value} object${value === 1 ? '' : 's'} for “${prompt}”.` );
-			input.value = '';
-
-		} else {
-
-			show( value, true );
-
-		}
+		const count = await multiplayer.askAi( prompt );
+		show( `Added ${count} object${count === 1 ? '' : 's'} for “${prompt}”.` );
+		input.value = '';
 
 	} catch ( error ) {
 
-		show( `Couldn't reach the AI: ${error.message}`, true );
+		show( error.message, true );
 
 	} finally {
 
@@ -111,31 +85,6 @@ function show( text, isError = false ) {
 
 	status.textContent = text;
 	status.classList.toggle( 'error', isError );
-
-}
-
-// multiplayer.js saves this tab's login token in sessionStorage under "<server uri>/<database>/auth_token".
-// Find the entry holding the current connection's token and read the server and database from its key,
-// so this file follows whatever database the editor is connected to.
-function findLogin( conn ) {
-
-	try {
-
-		for ( let i = 0; i < sessionStorage.length; i ++ ) {
-
-			const key = sessionStorage.key( i );
-			const match = key.match( /^(wss?:\/\/.+)\/([^/]+)\/auth_token$/ );
-			if ( match && conn.token && sessionStorage.getItem( key ) === conn.token ) {
-
-				return { http: match[ 1 ].replace( /^ws/, 'http' ), db: match[ 2 ], token: conn.token };
-
-			}
-
-		}
-
-	} catch { /* storage unavailable */ }
-
-	return null;
 
 }
 

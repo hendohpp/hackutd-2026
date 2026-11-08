@@ -10,6 +10,13 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const AiConfig = __t.object("AiConfig", {
+  id: __t.u32(),
+  apiKey: __t.string(),
+  owner: __t.identity(),
+});
+export type AiConfig = __Infer<typeof AiConfig>;
+
 export const LockExpiry = __t.object("LockExpiry", {
   scheduledId: __t.u64(),
   scheduledAt: __t.scheduleAt(),

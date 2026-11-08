@@ -39,6 +39,7 @@ import CreateSceneReducer from "./create_scene_reducer";
 import DeleteObjectReducer from "./delete_object_reducer";
 import JoinSceneReducer from "./join_scene_reducer";
 import LockObjectReducer from "./lock_object_reducer";
+import SetAiKeyReducer from "./set_ai_key_reducer";
 import UnlockObjectReducer from "./unlock_object_reducer";
 import UpdateCursorReducer from "./update_cursor_reducer";
 import UpdateObjectColorReducer from "./update_object_color_reducer";
@@ -46,6 +47,7 @@ import UpdateObjectTransformReducer from "./update_object_transform_reducer";
 import UpdateViewerReducer from "./update_viewer_reducer";
 
 // Import all procedure arg schemas
+import * as AskAiProcedure from "./ask_ai_procedure";
 
 // Import all table schema definitions
 import ObjectRow from "./object_table";
@@ -143,6 +145,7 @@ const reducersSchema = __reducers(
   __reducerSchema("delete_object", DeleteObjectReducer),
   __reducerSchema("join_scene", JoinSceneReducer),
   __reducerSchema("lock_object", LockObjectReducer),
+  __reducerSchema("set_ai_key", SetAiKeyReducer),
   __reducerSchema("unlock_object", UnlockObjectReducer),
   __reducerSchema("update_cursor", UpdateCursorReducer),
   __reducerSchema("update_object_color", UpdateObjectColorReducer),
@@ -152,6 +155,7 @@ const reducersSchema = __reducers(
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
 const proceduresSchema = __procedures(
+  __procedureSchema("ask_ai", AskAiProcedure.params, AskAiProcedure.returnType),
 );
 
 type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "tables"> & {
